@@ -1,0 +1,28 @@
+services:
+  api:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-null}
+      GOLD_PRICE_PROVIDER: ${GOLD_PRICE_PROVIDER:-null}
+      GROWW_API_KEY: ${GROWW_API_KEY:-}
+      GROWW_ACCESS_TOKEN: ${GROWW_ACCESS_TOKEN:-}
+      METALS_API_KEY: ${METALS_API_KEY:-}
+      MARKET_DATA_TTL: ${MARKET_DATA_TTL:-300}
+      GOLD_PRICE_TTL: ${GOLD_PRICE_TTL:-900}
+    restart: unless-stopped
+
+  # Optional Redis cache — enable with: docker compose --profile redis up
+  # (also set REDIS_URL=redis://redis:6379 and wire a Redis CacheProvider;
+  #  the default in-memory cache needs no external services)
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-data:

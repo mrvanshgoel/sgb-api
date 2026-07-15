@@ -1,0 +1,95 @@
+# ─── Dependencies ─────────────────────────────────────────────────────────
+node_modules/
+.pnp/
+.pnp.js
+
+# ─── Build output ─────────────────────────────────────────────────────────
+dist/
+build/
+*.tsbuildinfo
+
+# ─── Environment / secrets ───────────────────────────────────────────────
+# Never commit real credentials. .env.example is the tracked template.
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# ─── Data collection scratch space (downloaded sources, caches) ───────────
+# Cached RBI/NSE/BSE HTML, downloaded bhavcopy ZIPs, extracted CSVs and the
+# offline pipeline scripts live here. Reproducible from official sources;
+# never shipped. See DATA_SOURCES.md for the audit map.
+.sgbtmp/
+
+# Large downloaded instrument masters (e.g. Groww instruments.csv, ~20 MB)
+instruments.csv
+*.instruments.csv
+
+# ─── Assistant / local tooling ────────────────────────────────────────────
+.claude/
+CLAUDE.md
+.cursor/
+.aider*
+
+# ─── Test / coverage output ───────────────────────────────────────────────
+coverage/
+*.lcov
+.nyc_output/
+
+# ─── Logs ─────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Caches ───────────────────────────────────────────────────────────────
+.eslintcache
+.cache/
+.npm/
+.node-compile-cache/
+
+# ─── Python (pipeline scripts) ────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ─── Downloaded raw data artifacts (defense-in-depth; kept in .sgbtmp) ─────
+*.zip
+*.CSV
+cm*bhav.csv
+EQ_ISINCODE_*.csv
+rbi_*.html
+nse_*.html
+nse_*.json
+bse_*.json
+ip*.html
+pr*.html
+
+# ─── IDE / editor ─────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS ───────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Docker ───────────────────────────────────────────────────────────────
+.docker/
+
+# ─── Temp files ───────────────────────────────────────────────────────────
+*.tmp
+*.temp
+*.bak
