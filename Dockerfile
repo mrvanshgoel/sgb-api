@@ -2,6 +2,11 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
+# The lockfile is authored by npm 11 (developers' default). node:22-alpine
+# ships npm 10, which resolves peer deps differently and rejects the lockfile
+# (EUSAGE: Missing @emnapi/*). Pin npm 11 so the build matches the lockfile.
+RUN npm i -g npm@11
+
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -14,6 +19,8 @@ RUN npm run build
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+
+RUN npm i -g npm@11
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
