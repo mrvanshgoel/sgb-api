@@ -14,10 +14,15 @@ import {
   errorJson,
   healthJson,
   lookupResultJson,
+  quoteResponseJson,
+  marketDepthJson,
+  tradeInfoJson,
+  statsJson,
+  combinedLookupJson
 } from './json-schemas.js';
 
 export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promise<void> {
-  const { seriesProvider, lookupProvider, marketPriceProvider, goldProvider, searchProvider, cacheProvider } = deps;
+  const { seriesProvider, lookupProvider, goldProvider, searchProvider, cacheProvider } = deps;
 
   // ── GET /series ────────────────────────────────────────────────────────
   app.get(
@@ -227,11 +232,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
     {
       schema: {
         tags: ['market'],
-        summary: 'Live market data for a series',
-        description:
-          'Returns live quote data from the configured provider, with full price provenance. ' +
-          'If no compliant source is configured or the fetch fails, returns 200 with a null-shaped ' +
-          'payload and a reason — never an exception.',
+        summary: 'Live market data for a series (Legacy)',
         params: {
           type: 'object',
           properties: { symbol: { type: 'string', minLength: 1, maxLength: 30 } },
@@ -249,8 +250,27 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
           statusCode: 404,
         });
       }
-      const price = await marketPriceProvider.getPrice(record);
-      return { symbol: record.tradingSymbol, ...price };
+      
+      const { marketDataManager } = await import('../providers/market/manager.js');
+      const data = await marketDataManager.getQuote(record);
+      const quote = data.quote;
+      
+      return {
+        symbol: record.tradingSymbol,
+        marketPrice: quote.lastPrice,
+        previousClose: quote.previousClose,
+        dayHigh: quote.high,
+        dayLow: quote.low,
+        volume: quote.volume,
+        valueTraded: quote.valueTraded,
+        bid: data.depth.buyPrice1,
+        ask: data.depth.sellPrice1,
+        priceSource: quote.source,
+        priceTimestamp: quote.lastUpdated,
+        priceDelay: quote.cached ? 'Delayed' : 'Real-time',
+        priceStatus: quote.liveAvailable ? 'verified' : 'unavailable',
+        reason: quote.reason || null
+      };
     },
   );
 
@@ -273,15 +293,19 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
     {
       schema: { tags: ['meta'], summary: 'Service health check', response: { 200: healthJson } },
     },
-    async () => ({
-      status: 'ok' as const,
-      uptime: process.uptime(),
-      timestamp: new Date().toISOString(),
-      seriesCount: seriesProvider.getAll().length,
-      marketDataProvider: marketPriceProvider.name,
-      goldPriceProvider: goldProvider.name,
-      cacheProvider: cacheProvider.name,
-    }),
+    async () => {
+      const { marketDataManager } = await import('../providers/market/manager.js');
+      const mStats = marketDataManager.getHealth();
+      return {
+        status: mStats.healthy ? ('ok' as const) : ('degraded' as const),
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+        seriesCount: seriesProvider.getAll().length,
+        marketDataProvider: mStats.provider,
+        goldPriceProvider: goldProvider.name,
+        cacheProvider: cacheProvider.name,
+      };
+    },
   );
 
   // ── GET / ──────────────────────────────────────────────────────────────
@@ -296,10 +320,97 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
       'GET /security/{securityCode}',
       'GET /lookup/{identifier}',
       'GET /search?q=...',
-      'GET /market/{symbol}',
+      'GET /market/{symbol} (Legacy)',
+      'GET /price/{symbol}',
+      'GET /prices?symbols=SGBJUL28IV,SGBAUG28V',
+      'GET /depth/{symbol}',
+      'GET /trade/{symbol}',
       'GET /gold',
       'GET /health',
+      'GET /provider/health',
+      'GET /stats',
       'GET /docs',
     ],
   }));
+
+  // ── GET /price/:symbol ────────────────────────────────────────────────
+  app.get<{ Params: { symbol: string } }>(
+    '/price/:symbol',
+    { schema: { response: { 200: quoteResponseJson, 404: errorJson } } },
+    async (request, reply) => {
+      const record = seriesProvider.getBySymbol(request.params.symbol);
+      if (!record) return reply.status(404).send({ error: 'Not Found', message: 'Symbol not found', statusCode: 404 });
+      
+      const { marketDataManager } = await import('../providers/market/manager.js');
+      const start = Date.now();
+      const data = await marketDataManager.getQuote(record);
+      data.quote.latencyMs = Date.now() - start;
+      
+      return { symbol: record.tradingSymbol, market: data.quote };
+    }
+  );
+
+  // ── GET /prices ───────────────────────────────────────────────────────
+  app.get<{ Querystring: { symbols: string } }>(
+    '/prices',
+    async (request, reply) => {
+      if (!request.query.symbols) {
+         return reply.status(400).send({ error: 'Bad Request', message: 'Missing symbols query param', statusCode: 400 });
+      }
+      const { marketDataManager } = await import('../providers/market/manager.js');
+      const symbols = request.query.symbols.split(',').map(s => s.trim());
+      const records = symbols.map(s => seriesProvider.getBySymbol(s)).filter(r => r !== null) as any[];
+      const dataMap = await marketDataManager.getMultipleQuotes(records);
+      const results: any[] = [];
+      dataMap.forEach((data, symbol) => results.push({ symbol, market: data.quote }));
+      return { results };
+    }
+  );
+
+  // ── GET /depth/:symbol ────────────────────────────────────────────────
+  app.get<{ Params: { symbol: string } }>(
+    '/depth/:symbol',
+    { schema: { response: { 200: marketDepthJson, 404: errorJson } } },
+    async (request, reply) => {
+      const record = seriesProvider.getBySymbol(request.params.symbol);
+      if (!record) return reply.status(404).send({ error: 'Not Found', message: 'Symbol not found', statusCode: 404 });
+      const { marketDataManager } = await import('../providers/market/manager.js');
+      const data = await marketDataManager.getQuote(record);
+      return data.depth;
+    }
+  );
+
+  // ── GET /trade/:symbol ────────────────────────────────────────────────
+  app.get<{ Params: { symbol: string } }>(
+    '/trade/:symbol',
+    { schema: { response: { 200: tradeInfoJson, 404: errorJson } } },
+    async (request, reply) => {
+      const record = seriesProvider.getBySymbol(request.params.symbol);
+      if (!record) return reply.status(404).send({ error: 'Not Found', message: 'Symbol not found', statusCode: 404 });
+      const { marketDataManager } = await import('../providers/market/manager.js');
+      const data = await marketDataManager.getQuote(record);
+      return data.trade;
+    }
+  );
+
+  // ── GET /provider/health ──────────────────────────────────────────────
+  app.get('/provider/health', { schema: { response: { 200: healthJson } } }, async () => {
+    const { marketDataManager } = await import('../providers/market/manager.js');
+    return marketDataManager.getHealth();
+  });
+  
+  // ── GET /stats ────────────────────────────────────────────────────────
+  app.get('/stats', { schema: { response: { 200: statsJson } } }, async () => {
+    const { marketDataManager } = await import('../providers/market/manager.js');
+    const mStats = marketDataManager.getHealth();
+    return {
+       totalRequests: mStats.cacheStats.hit + mStats.cacheStats.miss,
+       cacheHitPercent: mStats.cacheHitRate,
+       providerLatency: 0,
+       refreshCount: mStats.sessionStats.refreshCount,
+       failureCount: mStats.sessionStats.failureCount,
+       cookieAgeSeconds: mStats.cookieAgeSeconds,
+       uptime: process.uptime()
+    };
+  });
 }

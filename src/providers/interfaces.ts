@@ -5,7 +5,7 @@
 
 import type {
   SGBRecord,
-  MarketPriceResult,
+  FullMarketData,
   GoldPriceResult,
   LookupResult,
   SearchFilters,
@@ -25,8 +25,10 @@ export interface LookupProvider {
 }
 
 export interface MarketPriceProvider {
-  /** MUST NOT throw. On any failure, return a null-shaped MarketPriceResult. */
-  getPrice(record: SGBRecord): Promise<MarketPriceResult>;
+  /** MUST NOT throw. On any failure, return a null-shaped FullMarketData. */
+  getPrice(record: SGBRecord): Promise<FullMarketData>;
+  /** MUST NOT throw. Returns a map of symbol to FullMarketData */
+  getMultiple(records: SGBRecord[]): Promise<Map<string, FullMarketData>>;
   readonly name: string;
 }
 

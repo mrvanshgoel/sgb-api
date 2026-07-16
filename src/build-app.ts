@@ -21,7 +21,6 @@ import { registerRoutes } from './routes/index.js';
 export interface AppDeps {
   seriesProvider: SeriesProvider;
   lookupProvider: LookupProvider;
-  marketPriceProvider: MarketPriceProvider;
   goldProvider: GoldProvider;
   searchProvider: SearchProvider;
   cacheProvider: CacheProvider;

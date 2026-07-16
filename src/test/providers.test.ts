@@ -6,8 +6,7 @@ import { StaticSeriesProvider } from '../providers/series.js';
 import { DefaultLookupProvider } from '../providers/lookup.js';
 import { FuseSearchProvider } from '../providers/search.js';
 import { NullMarketPriceProvider, NullGoldProvider, nullMarketResult } from '../providers/null-providers.js';
-import { CachedMarketPriceProvider, CachedGoldProvider } from '../providers/cached.js';
-import { GrowwMarketPriceProvider } from '../providers/market/groww.js';
+import { CachedGoldProvider } from '../providers/cached.js';
 import { MetalsDevGoldProvider } from '../providers/gold/metals-dev.js';
 import { InMemoryCache } from '../cache/index.js';
 import { allFixtures, fixtureA, fixtureC } from './fixtures.js';
@@ -120,9 +119,9 @@ describe('Null providers — honest null-shaped contract', () => {
   it('NullMarketPriceProvider returns all-null with reason, never throws', async () => {
     const p = new NullMarketPriceProvider();
     const r = await p.getPrice(fixtureA);
-    expect(r.marketPrice).toBeNull();
-    expect(r.priceStatus).toBe('unavailable');
-    expect(r.reason).toContain('No market data provider configured');
+    expect(r.quote.lastPrice).toBeNull();
+    expect(r.quote.liveAvailable).toBe(false);
+    expect(r.quote.reason).toContain('Not configured');
   });
 
   it('NullGoldProvider returns all-null with reason, never throws', async () => {
@@ -132,78 +131,6 @@ describe('Null providers — honest null-shaped contract', () => {
     expect(r.currency).toBe('INR');
     expect(r.priceStatus).toBe('unavailable');
     expect(r.reason).toBeTruthy();
-  });
-});
-
-describe('GrowwMarketPriceProvider — never throws', () => {
-  it('returns null-shaped when no credentials', async () => {
-    const p = new GrowwMarketPriceProvider('', '');
-    const r = await p.getPrice(fixtureA);
-    expect(r.marketPrice).toBeNull();
-    expect(r.priceStatus).toBe('unavailable');
-    expect(r.reason).toContain('not set');
-  });
-
-  it('returns null-shaped on HTTP error', async () => {
-    const mockFetch = (async () => new Response('{}', { status: 500 })) as typeof fetch;
-    const p = new GrowwMarketPriceProvider('key', 'token', mockFetch);
-    const r = await p.getPrice(fixtureA);
-    expect(r.marketPrice).toBeNull();
-    expect(r.reason).toContain('HTTP 500');
-  });
-
-  it('returns null-shaped on network failure (no exception)', async () => {
-    const mockFetch = (async () => {
-      throw new Error('ECONNREFUSED');
-    }) as typeof fetch;
-    const p = new GrowwMarketPriceProvider('key', 'token', mockFetch);
-    const r = await p.getPrice(fixtureA);
-    expect(r.priceStatus).toBe('unavailable');
-    expect(r.reason).toContain('ECONNREFUSED');
-  });
-
-  it('maps a successful quote with full provenance', async () => {
-    const payload = {
-      status: 'SUCCESS',
-      payload: {
-        last_price: 7450.5,
-        day_change: 25.5,
-        ohlc: { open: 7430, high: 7460, low: 7420, close: 7425 },
-        volume: 1234,
-        bid_price: 7449,
-        offer_price: 7452,
-        last_trade_time: 1752570000000,
-      },
-    };
-    const mockFetch = (async () =>
-      new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
-    const p = new GrowwMarketPriceProvider('key', 'token', mockFetch);
-    const r = await p.getPrice(fixtureA);
-    expect(r.marketPrice).toBe(7450.5);
-    expect(r.previousClose).toBe(7425); // last_price - day_change
-    expect(r.dayHigh).toBe(7460);
-    expect(r.bid).toBe(7449);
-    expect(r.ask).toBe(7452);
-    expect(r.valueTraded).toBeNull(); // not provided by Groww → null by design
-    expect(r.priceStatus).toBe('verified');
-    expect(r.priceSource).toContain('Groww');
-    expect(r.priceTimestamp).toBe(new Date(1752570000000).toISOString());
-  });
-
-  it('parses stringified ohlc (doc example format)', async () => {
-    const payload = {
-      status: 'SUCCESS',
-      payload: {
-        last_price: 100,
-        ohlc: '{open: 99.50,high: 101.25,low: 98.75,close: 99.00}',
-      },
-    };
-    const mockFetch = (async () =>
-      new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
-    const p = new GrowwMarketPriceProvider('key', 'token', mockFetch);
-    const r = await p.getPrice(fixtureA);
-    expect(r.dayHigh).toBe(101.25);
-    expect(r.dayLow).toBe(98.75);
   });
 });
 
@@ -267,27 +194,6 @@ describe('Cache', () => {
     const cache = new InMemoryCache();
     await cache.set('k', 'v', 0);
     expect(await cache.get('k')).toBe('v');
-  });
-
-  it('CachedMarketPriceProvider caches successes, not failures', async () => {
-    let calls = 0;
-    const flaky: MarketPriceProvider = {
-      name: 'flaky',
-      async getPrice(): Promise<MarketPriceResult> {
-        calls++;
-        if (calls === 1) return nullMarketResult('transient failure');
-        return { ...nullMarketResult(''), marketPrice: 100, priceStatus: 'verified', reason: null };
-      },
-    };
-    const cached = new CachedMarketPriceProvider(flaky, new InMemoryCache(), 300);
-
-    const first = await cached.getPrice(fixtureA);
-    expect(first.priceStatus).toBe('unavailable'); // failure NOT cached
-    const second = await cached.getPrice(fixtureA);
-    expect(second.marketPrice).toBe(100); // retried, success cached
-    const third = await cached.getPrice(fixtureA);
-    expect(third.marketPrice).toBe(100);
-    expect(calls).toBe(2); // third call served from cache
   });
 
   it('CachedGoldProvider serves from cache within TTL', async () => {

@@ -48,21 +48,72 @@ export interface SGBRecord {
   provenance: Provenance;
 }
 
+export interface MarketDepth {
+  buyPrice1: number | null;
+  buyQuantity1: number | null;
+  buyPrice2: number | null;
+  buyQuantity2: number | null;
+  buyPrice3: number | null;
+  buyQuantity3: number | null;
+  buyPrice4: number | null;
+  buyQuantity4: number | null;
+  buyPrice5: number | null;
+  buyQuantity5: number | null;
+  sellPrice1: number | null;
+  sellQuantity1: number | null;
+  sellPrice2: number | null;
+  sellQuantity2: number | null;
+  sellPrice3: number | null;
+  sellQuantity3: number | null;
+  sellPrice4: number | null;
+  sellQuantity4: number | null;
+  sellPrice5: number | null;
+  sellQuantity5: number | null;
+  totalBuyQuantity: number | null;
+  totalSellQuantity: number | null;
+  buySellRatio: number | null;
+  spread: number | null;
+}
+
+export interface TradeInfo {
+  volume: number | null;
+  vwap: number | null; // volume weighted average price / averagePrice
+  previousClose: number | null;
+  open: number | null;
+  upperCircuit: number | null;
+  lowerCircuit: number | null;
+  fiftyTwoWeekHigh: number | null;
+  fiftyTwoWeekLow: number | null;
+  faceValue: number | null;
+  series: string | null;
+  isin: string | null;
+  securityCode: string | null;
+}
+
 /** Market price result — never throws, always returns this shape */
 export interface MarketPriceResult {
-  marketPrice: number | null;
+  lastPrice: number | null;
   previousClose: number | null;
-  dayHigh: number | null;
-  dayLow: number | null;
+  change: number | null;
+  changePercent: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  averagePrice: number | null;
   volume: number | null;
   valueTraded: number | null;
-  bid: number | null;
-  ask: number | null;
-  priceSource: string | null;
-  priceTimestamp: string | null;
-  priceDelay: 'Real-time' | 'Delayed' | null;
-  priceStatus: 'verified' | 'delayed' | 'unavailable';
-  reason: string | null;
+  lastUpdated: string | null;
+  source: string;
+  cached: boolean;
+  latencyMs: number;
+  liveAvailable: boolean;
+  reason?: string;
+}
+
+export interface FullMarketData {
+  quote: MarketPriceResult;
+  depth: MarketDepth;
+  trade: TradeInfo;
 }
 
 /** Gold price result — never throws, always returns this shape */
@@ -102,10 +153,38 @@ export interface DerivedFields {
   prematureRedemptionEligible: boolean;
 }
 
+/**
+ * Advanced financial calculations requiring live market price.
+ */
+export interface FinancialDerivedFields {
+  changePercent: number | null;
+  premiumPercent: number | null;
+  discountPercent: number | null;
+  bidAskSpread: number | null;
+  accruedInterest: number | null;
+  yieldToMaturity: number | null;
+  dirtyPrice: number | null;
+  cleanPrice: number | null;
+  estimatedFairValue: number | null;
+  marketPremiumOverIntrinsic: number | null;
+  premiumOverIssue: number | null;
+  returnSinceIssue: number | null;
+  totalReturn: number | null;
+  annualizedReturn: number | null;
+}
+
 /** Full series response: stored record + request-time coupon statuses + derived fields */
 export interface SGBRecordResponse extends Omit<SGBRecord, 'couponSchedule'> {
   couponSchedule: CouponPayment[];
   derived: DerivedFields;
+}
+
+export interface CombinedLookupResponse {
+  record: SGBRecordResponse | null;
+  market?: FullMarketData;
+  financial?: FinancialDerivedFields;
+  matchedBy?: string | null;
+  suggestions?: SGBRecord[] | null;
 }
 
 /** Search filter options */

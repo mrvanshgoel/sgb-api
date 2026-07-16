@@ -185,7 +185,7 @@ describe('GET /health', () => {
     const body = res.json();
     expect(body.status).toBe('ok');
     expect(body.seriesCount).toBe(3);
-    expect(body.marketDataProvider).toBe('null');
+    expect(body.marketDataProvider).toBe('NSE Official');
     expect(body.goldPriceProvider).toBe('null');
     expect(body.cacheProvider).toBe('in-memory');
   });
