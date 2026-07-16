@@ -112,7 +112,7 @@ describe('SgbAnalyzerProvider CSV mapping', () => {
     '"SGBTESTA","IN0020TEST01",4000,14396.44,14040.82,374.42',
   ].join('\n');
 
-  it('maps Ask Price to lastPrice and Average Trading Volume to volume; leaves unknowns null', async () => {
+  it('maps Ask Price to the ask side of the book, never to lastPrice; leaves unavailable fields null', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -125,13 +125,22 @@ describe('SgbAnalyzerProvider CSV mapping', () => {
       const result = await provider.getPrice(fixtureA);
 
       expect(result.quote.source).toBe('SGBAnalyzer');
-      expect(result.quote.lastPrice).toBe(14040.82);
-      expect(result.quote.volume).toBe(374.42);
-      expect(result.quote.liveAvailable).toBe(true);
+      // Ask Price is a quote, not a trade — it must live on the ask side only.
+      expect(result.depth.sellPrice1).toBe(14040.82);
+      // No last traded price, no day volume, no valuation leaks into market fields.
+      expect(result.quote.lastPrice).toBeNull();
+      expect(result.quote.volume).toBeNull();
+      expect(result.trade.volume).toBeNull();
       expect(result.quote.previousClose).toBeNull();
       expect(result.quote.open).toBeNull();
       expect(result.quote.high).toBeNull();
+      expect(result.quote.low).toBeNull();
       expect(result.quote.change).toBeNull();
+      expect(result.quote.changePercent).toBeNull();
+      expect(result.quote.averagePrice).toBeNull();
+      expect(result.quote.valueTraded).toBeNull();
+      // We still surface that a genuine live ask quote is available.
+      expect(result.quote.liveAvailable).toBe(true);
       expect(result.trade.isin).toBe('IN0020TEST01');
     } finally {
       vi.unstubAllGlobals();

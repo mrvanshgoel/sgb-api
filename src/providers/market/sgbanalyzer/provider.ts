@@ -6,25 +6,37 @@ import { logger } from '../../../utils/logger.js';
 // Used only when the NSE Official provider is unreachable (401/403/timeout/
 // network error/malformed response) from blocked cloud egress IPs. Consumes the
 // single structured endpoint sgbanalyzer.com exposes — /api/sgbs/csv — which is
-// the same source its own /live page renders from. No HTML scraping.
+// the exact source the site's own /live table fetches (verified in bundle
+// chunk 776: `fetch("/api/sgbs/csv",{cache:"no-store"})` with the column map
+// { askPrice:"Ask Price", avgTradingVolumeLast7Days:"Avg Volume",
+//   fairValue:"Fair Value", ... }). No other market-data endpoint exists on the
+// whole site (full investigation: RSC/__NEXT_DATA__ only embed 2 sample rows;
+// /sgb/[symbol] and /live both client-fetch this same CSV; Supabase references
+// are auth-only; no GraphQL/websocket/EventSource carries quotes). No HTML
+// scraping is needed because the structured CSV is the primary source.
 //
-// The CSV carries these per-symbol columns (verified against the live site):
-//   Symbol, ISIN, Issue Price, Maturity Date, ..., Fair Value,
-//   Ask Price, Average Trading Volume, ...
-// It does NOT carry a true traded last price, previous close, OHLC, change,
-// value traded or an update timestamp. We map only what genuinely exists:
-//   Ask Price              -> quote.lastPrice   (best available live price proxy)
-//   Average Trading Volume -> quote.volume / trade.volume
-//   ISIN                   -> trade.isin
-// Everything unavailable stays null. We never invent values.
+// CRITICAL ACCURACY NOTE — the CSV holds VALUATION metrics, not live trades:
+//   "Ask Price"                -> best sell-side QUOTE, NOT a last traded price.
+//                                 Mapped to depth.sellPrice1 only. lastPrice
+//                                 stays null — SGBAnalyzer has no LTP.
+//   "Average Trading Volume"   -> a rolling 7-day AVERAGE (field
+//                                 avgTradingVolumeLast7Days on the site), NOT a
+//                                 day's traded volume. Surfaced only in the
+//                                 non-standard field; quote.volume stays null.
+//   "Fair Value"               -> a computed valuation, NOT a market price. Not
+//                                 mapped to any live field.
+// The CSV carries no last price, previous close, open, high, low, average traded
+// price, traded volume, traded value, change, change %, or update timestamp.
+// Every one of those stays null. We never map a quote/valuation to a trade field
+// and never invent, infer, estimate, or calculate a value.
 
 const CSV_URL = 'https://sgbanalyzer.com/api/sgbs/csv';
-const FETCH_TIMEOUT_MS = 8 * 1000;
+const FETCH_TIMEOUT_MS = 10 * 1000;
 const CSV_TTL_MS = 25 * 1000; // brief shared cache so getMultiple issues one request
 
 interface SgbaRow {
-  askPrice: number | null;
-  averageVolume: number | null;
+  askPrice: number | null; // best sell-side quote (NOT a last traded price)
+  avgTradingVolume7d: number | null; // rolling 7-day average (NOT day volume)
   isin: string | null;
 }
 
@@ -151,7 +163,7 @@ export class SgbAnalyzerProvider implements MarketPriceProvider {
       if (!symbol) continue;
       map.set(symbol, {
         askPrice: this.toNumber(iAsk === -1 ? undefined : cells[iAsk]),
-        averageVolume: this.toNumber(iVol === -1 ? undefined : cells[iVol]),
+        avgTradingVolume7d: this.toNumber(iVol === -1 ? undefined : cells[iVol]),
         isin: (iIsin === -1 ? '' : (cells[iIsin] ?? '')).trim() || null,
       });
     }
@@ -191,11 +203,14 @@ export class SgbAnalyzerProvider implements MarketPriceProvider {
   }
 
   private mapRow(row: SgbaRow): FullMarketData {
-    const lastPrice = row.askPrice;
-    const volume = row.averageVolume;
+    // Ask Price is a best sell-side quote — it maps to the ask side of the order
+    // book, never to lastPrice. SGBAnalyzer exposes no last traded price, so
+    // quote.lastPrice stays null. The one genuine live datum is this ask quote.
+    const ask = row.askPrice;
+    const hasLiveData = ask !== null;
     return {
       quote: {
-        lastPrice,
+        lastPrice: null, // SGBAnalyzer has no LTP; do not substitute the ask
         previousClose: null,
         change: null,
         changePercent: null,
@@ -203,13 +218,14 @@ export class SgbAnalyzerProvider implements MarketPriceProvider {
         high: null,
         low: null,
         averagePrice: null,
-        volume,
+        volume: null, // CSV "Average Trading Volume" is a 7-day average, not day volume
         valueTraded: null,
         lastUpdated: null,
         source: this.name,
         cached: false,
         latencyMs: 0,
-        liveAvailable: lastPrice !== null,
+        liveAvailable: hasLiveData,
+        reason: hasLiveData ? 'Ask quote only (no last traded price from SGBAnalyzer)' : 'No ask price for symbol',
       },
       depth: {
         buyPrice1: null, buyQuantity1: null,
@@ -217,7 +233,7 @@ export class SgbAnalyzerProvider implements MarketPriceProvider {
         buyPrice3: null, buyQuantity3: null,
         buyPrice4: null, buyQuantity4: null,
         buyPrice5: null, buyQuantity5: null,
-        sellPrice1: null, sellQuantity1: null,
+        sellPrice1: ask, sellQuantity1: null, // best ask quote — its true meaning
         sellPrice2: null, sellQuantity2: null,
         sellPrice3: null, sellQuantity3: null,
         sellPrice4: null, sellQuantity4: null,
@@ -226,7 +242,7 @@ export class SgbAnalyzerProvider implements MarketPriceProvider {
         buySellRatio: null, spread: null,
       },
       trade: {
-        volume,
+        volume: null, // no true traded volume available
         vwap: null,
         previousClose: null,
         open: null,
