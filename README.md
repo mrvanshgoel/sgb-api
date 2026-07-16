@@ -71,14 +71,11 @@ Notes:
 
 NSE has **no officially documented public quote API**. The `nseindia.com/api/*` JSON endpoints are undocumented website internals behind bot protection, and NSE routes legitimate programmatic data access through paid subscription agreements (NSE Data & Analytics). Building a scraper on those endpoints would be both fragile and outside sanctioned use — so this project ships **no** NSE scraper. The same reasoning applies to BSE. If you hold a licensed data feed, implement `MarketPriceProvider` against it (see below).
 
-### Gold price — metals.dev
+### Gold & Silver price — CoinGecko + Yahoo Finance (Failover)
 
-```env
-GOLD_PRICE_PROVIDER=metals
-METALS_API_KEY=your-key   # free tier: 100 req/month
-```
+The API fetches live gold and silver prices entirely via free providers, prioritizing **CoinGecko**, and automatically falling back to **Yahoo Finance** if CoinGecko is rate-limited or unavailable.
 
-The default 15-minute cache TTL keeps a single instance within the free-tier quota.
+No API keys are required. Prices are cached for 60 seconds (successes only) to ensure fast responses while respecting provider rate limits.
 
 ## Architecture
 
@@ -179,11 +176,8 @@ cp .env.example .env
 | `HOST` | `0.0.0.0` | Bind address |
 | `NODE_ENV` | `development` | Set to `production` when deployed |
 | `MARKET_DATA_PROVIDER` | `null` | `null` or `groww` |
-| `GOLD_PRICE_PROVIDER` | `null` | `null` or `metals` |
 | `GROWW_ACCESS_TOKEN` / `GROWW_API_KEY` | — | Only if `MARKET_DATA_PROVIDER=groww` |
-| `METALS_API_KEY` | — | Only if `GOLD_PRICE_PROVIDER=metals` |
 | `MARKET_DATA_TTL` | `300` | Market cache TTL (seconds) |
-| `GOLD_PRICE_TTL` | `900` | Gold cache TTL (seconds) |
 
 Secrets are read from the environment only — **never commit a real `.env`** (it is git-ignored; only `.env.example` is tracked).
 

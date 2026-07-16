@@ -26,9 +26,12 @@ export interface AppDeps {
   cacheProvider: CacheProvider;
 }
 
+import { logger, isDebug } from './utils/logger.js';
+
 export async function buildApp(deps: AppDeps, opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: opts.logger ?? true,
+    logger: opts.logger !== undefined ? opts.logger : (isDebug ? true : false),
+    disableRequestLogging: !isDebug,
     ajv: { customOptions: { coerceTypes: true, useDefaults: true } },
   });
 
@@ -65,7 +68,7 @@ export async function buildApp(deps: AppDeps, opts: { logger?: boolean } = {}): 
   // Missing DATA is never an error (null-shaped 200s handled in routes).
   app.setErrorHandler((error: FastifyError, _request, reply) => {
     const status = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
-    if (status >= 500) app.log.error(error);
+    if (status >= 500) logger.error(error);
     reply.status(status).send({
       error: status >= 500 ? 'Internal Server Error' : error.name || 'Bad Request',
       message: status >= 500 ? 'An unexpected error occurred' : error.message,

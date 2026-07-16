@@ -1,6 +1,7 @@
 import { MarketPriceProvider } from '../../interfaces.js';
 import type { SGBRecord, FullMarketData } from '../../../types/index.js';
 import { nseSessionManager } from './session.js';
+import { logger } from '../../../utils/logger.js';
 import * as https from 'https';
 
 export class NseMarketPriceProvider implements MarketPriceProvider {
@@ -13,15 +14,29 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
     }
 
     try {
+      logger.info(`Fetching live quote: ${symbol}`);
+      const startTime = Date.now();
       let data = await this.fetchData(symbol);
-      return this.parseResponse(data, symbol);
+      const latency = Date.now() - startTime;
+      logger.info(`NSE quote received for ${symbol} (${latency}ms)`);
+      
+      const parsed = this.parseResponse(data, symbol);
+      parsed.quote.latencyMs = latency;
+      return parsed;
     } catch (e: any) {
       // Retry once on 401/403 which indicates expired cookies
       if (e.message.includes('401') || e.message.includes('403')) {
         try {
+          logger.warn('NSE returned 403, refreshing session...');
           await nseSessionManager.forceRefresh();
+          const startTime = Date.now();
           let data = await this.fetchData(symbol);
-          return this.parseResponse(data, symbol);
+          const latency = Date.now() - startTime;
+          logger.info(`NSE quote received for ${symbol} (${latency}ms)`);
+          
+          const parsed = this.parseResponse(data, symbol);
+          parsed.quote.latencyMs = latency;
+          return parsed;
         } catch (e2: any) {
           return this.createNullData(e2.message);
         }

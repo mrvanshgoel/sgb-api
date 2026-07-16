@@ -1,5 +1,6 @@
 import type { SGBRecord, FullMarketData } from '../../types/index.js';
 import type { MarketPriceProvider } from '../interfaces.js';
+import { logger } from '../../utils/logger.js';
 
 interface CacheEntry {
   data: FullMarketData;
@@ -18,6 +19,7 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
 
   private readonly TTL_LIVE_MS = 30 * 1000; // 30 seconds
   private readonly TTL_NEGATIVE_MS = 10 * 60 * 1000; // 10 minutes
+  private readonly TTL_403_MS = 10 * 1000; // 10 seconds
   
   constructor(private inner: MarketPriceProvider) {}
 
@@ -37,6 +39,7 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
     if (cached) {
       if (now < cached.expiresAt) {
         this.stats.hit++;
+        logger.info(`Cache hit: ${symbol}`);
         return { ...cached.data, quote: { ...cached.data.quote, cached: true } };
       } else {
         this.stats.expired++;
@@ -49,7 +52,18 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
     const result = await this.inner.getPrice(record);
     
     // Set TTL based on whether data was successfully retrieved
-    const ttl = result.quote.liveAvailable ? this.TTL_LIVE_MS : this.TTL_NEGATIVE_MS;
+    let ttl = result.quote.liveAvailable ? this.TTL_LIVE_MS : this.TTL_NEGATIVE_MS;
+    if (result.quote.reason?.includes('403') || result.quote.reason?.includes('401')) {
+       ttl = this.TTL_403_MS;
+    }
+    
+    if (result.quote.liveAvailable) {
+       // Only log successful live requests here since provider already logs fetching/errors
+       logger.info(`Live quote received for ${symbol}`);
+    } else if (cached) {
+       logger.warn(`Using cached quote for ${symbol} due to live provider failure`);
+       return { ...cached.data, quote: { ...cached.data.quote, cached: true } };
+    }
     
     this.cache.set(symbol, {
       data: result,
@@ -71,6 +85,7 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
       const cached = this.cache.get(symbol);
       if (cached && now < cached.expiresAt) {
         this.stats.hit++;
+        logger.info(`Cache hit: ${symbol}`);
         results.set(symbol, { ...cached.data, quote: { ...cached.data.quote, cached: true } });
       } else {
         if (cached) this.stats.expired++;
@@ -82,9 +97,25 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
     if (toFetch.length > 0) {
       const fetchedResults = await this.inner.getMultiple(toFetch);
       for (const [symbol, data] of fetchedResults) {
-        const ttl = data.quote.liveAvailable ? this.TTL_LIVE_MS : this.TTL_NEGATIVE_MS;
-        this.cache.set(symbol, { data, expiresAt: now + ttl });
-        results.set(symbol, data);
+        const cached = this.cache.get(symbol);
+        
+        let ttl = data.quote.liveAvailable ? this.TTL_LIVE_MS : this.TTL_NEGATIVE_MS;
+        if (data.quote.reason?.includes('403') || data.quote.reason?.includes('401')) {
+           ttl = this.TTL_403_MS;
+        }
+        
+        if (data.quote.liveAvailable) {
+           logger.info(`Live quote received for ${symbol}`);
+           this.cache.set(symbol, { data, expiresAt: now + ttl });
+           results.set(symbol, data);
+        } else if (cached) {
+           logger.warn(`Using cached quote for ${symbol} due to live provider failure`);
+           this.cache.set(symbol, { data: cached.data, expiresAt: now + ttl });
+           results.set(symbol, { ...cached.data, quote: { ...cached.data.quote, cached: true } });
+        } else {
+           this.cache.set(symbol, { data, expiresAt: now + ttl });
+           results.set(symbol, data);
+        }
       }
     }
 

@@ -171,7 +171,8 @@ describe('GET /gold — null-safety contract', () => {
     const res = await app.inject({ method: 'GET', url: '/gold' });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.pricePerGram).toBeNull();
+    expect(body.goldPricePerGram).toBeNull();
+    expect(body.silverPricePerGram).toBeNull();
     expect(body.currency).toBe('INR');
     expect(body.priceStatus).toBe('unavailable');
     expect(() => goldPriceResultSchema.parse(body)).not.toThrow();
@@ -184,9 +185,10 @@ describe('GET /health', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.status).toBe('ok');
+    expect(body.uptime).toBeGreaterThan(0);
     expect(body.seriesCount).toBe(3);
     expect(body.marketDataProvider).toBe('NSE Official');
-    expect(body.goldPriceProvider).toBe('null');
+    expect(body.goldPriceProvider).toBe('NullGoldProvider');
     expect(body.cacheProvider).toBe('in-memory');
   });
 });

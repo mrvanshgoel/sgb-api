@@ -105,11 +105,14 @@ export const marketPriceResultSchema = z.object({
 
 /** Gold price result schema */
 export const goldPriceResultSchema = z.object({
-  pricePerGram: z.number().nullable(),
-  pricePerOunce: z.number().nullable(),
+  goldPricePerGram: z.number().nullable(),
+  goldPricePerOunce: z.number().nullable(),
+  silverPricePerGram: z.number().nullable(),
+  silverPricePerOunce: z.number().nullable(),
   currency: z.literal('INR'),
   timestamp: z.string().nullable(),
   source: z.string().nullable(),
+  cached: z.boolean(),
   priceStatus: z.enum(['verified', 'delayed', 'unavailable']),
   reason: z.string().nullable(),
 });

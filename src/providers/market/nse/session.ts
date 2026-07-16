@@ -1,4 +1,4 @@
-import https from 'node:https';
+import { logger } from '../../../utils/logger.js';
 
 export class NseSessionManager {
   private activeCookie: string | null = null;
@@ -84,6 +84,8 @@ export class NseSessionManager {
       this.consecutiveFailures = 0;
       this.stats.lastSuccess = new Date();
       
+      logger.info('NSE session refreshed successfully');
+      
       return cookieStr;
     } catch (error) {
       this.consecutiveFailures++;
@@ -93,10 +95,12 @@ export class NseSessionManager {
       if (retries > 0) {
         // Exponential backoff
         const backoffMs = Math.pow(2, 4 - retries) * 1000;
+        logger.warn(`Failed to refresh NSE session, retrying in ${backoffMs}ms...`);
         await new Promise(res => setTimeout(res, backoffMs));
         return this.fetchNewCookie(retries - 1);
       }
       
+      logger.error(`Failed to refresh NSE session: ${(error as Error).message}`);
       throw error;
     }
   }

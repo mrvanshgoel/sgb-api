@@ -96,13 +96,16 @@ export const marketPriceJson = {
 export const goldPriceJson = {
   type: 'object',
   description:
-    'Live gold price from an independent provider. Null-shaped with a reason when unavailable.',
+    'Live gold & silver price from an independent provider. Null-shaped with a reason when unavailable.',
   properties: {
-    pricePerGram: nullable('number'),
-    pricePerOunce: nullable('number'),
+    goldPricePerGram: nullable('number'),
+    goldPricePerOunce: nullable('number'),
+    silverPricePerGram: nullable('number'),
+    silverPricePerOunce: nullable('number'),
     currency: { type: 'string', enum: ['INR'] },
     timestamp: nullable('string'),
     source: nullable('string'),
+    cached: { type: 'boolean' },
     priceStatus: { type: 'string', enum: ['verified', 'delayed', 'unavailable'] },
     reason: nullable('string'),
   },

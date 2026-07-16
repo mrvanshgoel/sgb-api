@@ -12,7 +12,6 @@ import { StaticSeriesProvider } from './providers/series.js';
 import { DefaultLookupProvider } from './providers/lookup.js';
 import { FuseSearchProvider } from './providers/search.js';
 import { NullGoldProvider } from './providers/null-providers.js';
-import { CachedGoldProvider } from './providers/cached.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,16 +21,16 @@ export function loadSeriesData(): SGBRecord[] {
   return file.series;
 }
 
+import { CoinGeckoGoldProvider } from './providers/gold/coingecko.js';
+import { YahooFinanceGoldProvider } from './providers/gold/yahoo.js';
+import { GoldDataManager } from './providers/gold/manager.js';
+
 async function buildGoldProvider(): Promise<GoldProvider> {
-  switch (config.goldPriceProvider) {
-    case 'metals': {
-      const { MetalsDevGoldProvider } = await import('./providers/gold/metals-dev.js');
-      return new MetalsDevGoldProvider(config.metalsApiKey);
-    }
-    case 'null':
-    default:
-      return new NullGoldProvider();
-  }
+  const providers = [
+    new CoinGeckoGoldProvider(),
+    new YahooFinanceGoldProvider()
+  ];
+  return new GoldDataManager(providers);
 }
 
 export async function buildDefaultDeps(): Promise<AppDeps> {
@@ -40,11 +39,7 @@ export async function buildDefaultDeps(): Promise<AppDeps> {
   const searchProvider = new FuseSearchProvider(seriesProvider);
   const lookupProvider = new DefaultLookupProvider(seriesProvider, searchProvider);
 
-  const goldProvider = new CachedGoldProvider(
-    await buildGoldProvider(),
-    cacheProvider,
-    config.goldPriceTtl,
-  );
+  const goldProvider = await buildGoldProvider();
 
   return {
     seriesProvider,

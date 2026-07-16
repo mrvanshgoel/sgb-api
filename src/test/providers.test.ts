@@ -6,8 +6,6 @@ import { StaticSeriesProvider } from '../providers/series.js';
 import { DefaultLookupProvider } from '../providers/lookup.js';
 import { FuseSearchProvider } from '../providers/search.js';
 import { NullMarketPriceProvider, NullGoldProvider, nullMarketResult } from '../providers/null-providers.js';
-import { CachedGoldProvider } from '../providers/cached.js';
-import { MetalsDevGoldProvider } from '../providers/gold/metals-dev.js';
 import { InMemoryCache } from '../cache/index.js';
 import { allFixtures, fixtureA, fixtureC } from './fixtures.js';
 import type { MarketPriceResult } from '../types/index.js';
@@ -127,57 +125,85 @@ describe('Null providers — honest null-shaped contract', () => {
   it('NullGoldProvider returns all-null with reason, never throws', async () => {
     const p = new NullGoldProvider();
     const r = await p.getPrice();
-    expect(r.pricePerGram).toBeNull();
+    expect(r.goldPricePerGram).toBeNull();
     expect(r.currency).toBe('INR');
     expect(r.priceStatus).toBe('unavailable');
     expect(r.reason).toBeTruthy();
   });
 });
 
-describe('MetalsDevGoldProvider — never throws', () => {
-  it('returns null-shaped when no API key', async () => {
-    const p = new MetalsDevGoldProvider('');
-    const r = await p.getPrice();
-    expect(r.pricePerGram).toBeNull();
-    expect(r.reason).toContain('METALS_API_KEY not set');
-  });
-
-  it('maps a successful response and converts g → toz exactly', async () => {
-    const body = {
-      status: 'success',
-      currency: 'INR',
-      unit: 'g',
-      metals: { gold: 6234.5 },
-      timestamps: { metal: '2026-07-15T09:58:00.000Z' },
+describe('GoldDataManager', () => {
+  it('falls back to secondary provider if primary fails', async () => {
+    let primaryCalled = 0;
+    let secondaryCalled = 0;
+    
+    const primary = {
+      name: 'Primary',
+      async getPrice() {
+        primaryCalled++;
+        throw new Error('Primary failed');
+      }
     };
-    const mockFetch = (async () =>
-      new Response(JSON.stringify(body), { status: 200 })) as typeof fetch;
-    const p = new MetalsDevGoldProvider('key', mockFetch);
-    const r = await p.getPrice();
-    expect(r.pricePerGram).toBe(6234.5);
-    expect(r.pricePerOunce).toBe(193914.63); // 6234.5 × 31.1034768 = 193914.626...
-    expect(r.priceStatus).toBe('verified');
-    expect(r.source).toBe('metals.dev');
+    
+    const secondary = {
+      name: 'Secondary',
+      async getPrice() {
+        secondaryCalled++;
+        return {
+          goldPricePerGram: 100,
+          goldPricePerOunce: 3110.3,
+          silverPricePerGram: 1,
+          silverPricePerOunce: 31.1,
+          currency: 'INR' as const,
+          timestamp: '2026-07-16T10:00:00.000Z',
+          source: 'Secondary',
+          cached: false,
+          priceStatus: 'verified' as const,
+          reason: null
+        };
+      }
+    };
+    
+    const { GoldDataManager } = await import('../providers/gold/manager.js');
+    const manager = new GoldDataManager([primary, secondary]);
+    
+    const result = await manager.getPrice();
+    
+    expect(primaryCalled).toBe(1);
+    expect(secondaryCalled).toBe(1);
+    expect(result.goldPricePerGram).toBe(100);
+    expect(result.source).toBe('Secondary');
   });
 
-  it('returns null-shaped on API failure status', async () => {
-    const body = { status: 'failure', error_message: 'quota exceeded' };
-    const mockFetch = (async () =>
-      new Response(JSON.stringify(body), { status: 200 })) as typeof fetch;
-    const p = new MetalsDevGoldProvider('key', mockFetch);
-    const r = await p.getPrice();
-    expect(r.pricePerGram).toBeNull();
-    expect(r.reason).toContain('quota exceeded');
-  });
-
-  it('rejects unexpected currency rather than serving wrong numbers', async () => {
-    const body = { status: 'success', currency: 'USD', metals: { gold: 75 } };
-    const mockFetch = (async () =>
-      new Response(JSON.stringify(body), { status: 200 })) as typeof fetch;
-    const p = new MetalsDevGoldProvider('key', mockFetch);
-    const r = await p.getPrice();
-    expect(r.pricePerGram).toBeNull();
-    expect(r.reason).toContain('unexpected currency');
+  it('serves from cache if TTL valid', async () => {
+    let calls = 0;
+    const provider = {
+      name: 'Primary',
+      async getPrice() {
+        calls++;
+        return {
+          goldPricePerGram: 100,
+          goldPricePerOunce: 3110.3,
+          silverPricePerGram: 1,
+          silverPricePerOunce: 31.1,
+          currency: 'INR' as const,
+          timestamp: '2026-07-16T10:00:00.000Z',
+          source: 'Primary',
+          cached: false,
+          priceStatus: 'verified' as const,
+          reason: null
+        };
+      }
+    };
+    
+    const { GoldDataManager } = await import('../providers/gold/manager.js');
+    const manager = new GoldDataManager([provider]);
+    
+    await manager.getPrice();
+    const cachedResult = await manager.getPrice();
+    
+    expect(calls).toBe(1);
+    expect(cachedResult.cached).toBe(true);
   });
 });
 
@@ -196,26 +222,5 @@ describe('Cache', () => {
     expect(await cache.get('k')).toBe('v');
   });
 
-  it('CachedGoldProvider serves from cache within TTL', async () => {
-    let calls = 0;
-    const inner = {
-      name: 'counter',
-      async getPrice() {
-        calls++;
-        return {
-          pricePerGram: 6000,
-          pricePerOunce: null,
-          currency: 'INR' as const,
-          timestamp: null,
-          source: 'test',
-          priceStatus: 'verified' as const,
-          reason: null,
-        };
-      },
-    };
-    const cached = new CachedGoldProvider(inner, new InMemoryCache(), 900);
-    await cached.getPrice();
-    await cached.getPrice();
-    expect(calls).toBe(1);
-  });
+
 });

@@ -3,6 +3,7 @@
 import { config } from './config/index.js';
 import { buildApp } from './build-app.js';
 import { buildDefaultDeps } from './container.js';
+import { logger } from './utils/logger.js';
 
 async function main(): Promise<void> {
   const deps = await buildDefaultDeps();
@@ -17,9 +18,9 @@ async function main(): Promise<void> {
 
   try {
     await app.listen({ port: config.port, host: config.host });
-    app.log.info(`SGB API listening on ${config.host}:${config.port} — docs at /docs`);
+    logger.info(`Server started on port ${config.port}`);
   } catch (err) {
-    app.log.error(err);
+    logger.error(err as Error);
     process.exit(1);
   }
 }

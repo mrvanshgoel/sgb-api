@@ -46,22 +46,23 @@ export class NullMarketPriceProvider implements MarketPriceProvider {
 
 export function nullGoldResult(reason: string): GoldPriceResult {
   return {
-    pricePerGram: null,
-    pricePerOunce: null,
+    goldPricePerGram: null,
+    goldPricePerOunce: null,
+    silverPricePerGram: null,
+    silverPricePerOunce: null,
     currency: 'INR',
     timestamp: null,
     source: null,
+    cached: false,
     priceStatus: 'unavailable',
-    reason,
+    reason
   };
 }
 
 export class NullGoldProvider implements GoldProvider {
-  readonly name = 'null';
+  public readonly name = 'NullGoldProvider';
 
-  async getPrice(): Promise<GoldPriceResult> {
-    return nullGoldResult(
-      'No gold price provider configured. Set GOLD_PRICE_PROVIDER=metals with METALS_API_KEY or inject a provider (see README).',
-    );
+  public async getPrice(): Promise<GoldPriceResult> {
+    return nullGoldResult('No gold price provider configured. Set GOLD_PRICE_PROVIDER=metals with METALS_API_KEY or inject a provider (see README).');
   }
 }

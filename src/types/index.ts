@@ -116,13 +116,16 @@ export interface FullMarketData {
   trade: TradeInfo;
 }
 
-/** Gold price result — never throws, always returns this shape */
+/** Gold & Silver price result — never throws, always returns this shape */
 export interface GoldPriceResult {
-  pricePerGram: number | null;
-  pricePerOunce: number | null;
+  goldPricePerGram: number | null;
+  goldPricePerOunce: number | null;
+  silverPricePerGram: number | null;
+  silverPricePerOunce: number | null;
   currency: 'INR';
   timestamp: string | null;
   source: string | null;
+  cached: boolean;
   priceStatus: 'verified' | 'delayed' | 'unavailable';
   reason: string | null;
 }
