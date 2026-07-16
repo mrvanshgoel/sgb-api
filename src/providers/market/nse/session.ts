@@ -73,9 +73,10 @@ async function getOrCreateSession(): Promise<any> {
       clientIdentifier: ClientIdentifier.chrome_120,
       timeout: 30_000,
       insecureSkipVerify: false,
+      disableIPV6: true,
     });
     _initialized = true;
-    logger.info('TLS session initialized (Chrome/120 fingerprint)');
+    logger.info('TLS session initialized (Chrome/120 fingerprint, IPv6 disabled)');
   } catch (e: any) {
     logger.warn(`TLS client init failed, falling back to native fetch: ${e.message}`);
     _session = null;
@@ -145,7 +146,7 @@ export class NseSessionManager {
         const res = await fetch('https://www.nseindia.com', {
           headers: HOMEPAGE_HEADERS
         });
-        if (res.status !== 200 && res.status !== 403) {
+        if (res.status !== 200) {
           throw new Error(`NSE homepage returned ${res.status}`);
         }
       } else {
@@ -154,7 +155,7 @@ export class NseSessionManager {
           headers: HOMEPAGE_HEADERS,
           followRedirects: true
         });
-        if (res.status !== 200 && res.status !== 403) {
+        if (res.status !== 200) {
           throw new Error(`NSE homepage returned ${res.status}`);
         }
       }
