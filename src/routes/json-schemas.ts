@@ -141,9 +141,14 @@ export const providerHealthJson = {
       type: 'object',
       properties: {
         provider: { type: 'string' },
+        status: { type: 'string', enum: ['healthy', 'degraded', 'dead'] },
         healthy: { type: 'boolean' },
+        transportMode: { type: 'string' },
         cookieAgeSeconds: { type: 'number' },
         cacheHitRate: { type: 'string' },
+        consecutiveFailures: { type: 'integer' },
+        lastLatencyMs: nullable('number'),
+        lastHttpStatus: nullable('integer'),
         lastSuccess: nullable('string'),
         lastFailure: nullable('string')
       }

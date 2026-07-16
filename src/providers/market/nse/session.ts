@@ -1,4 +1,5 @@
 import { logger } from '../../../utils/logger.js';
+import { loadNseTransportConfig, type TransportMode } from './transport.js';
 
 // ── Lazy-loaded TLS session (avoids startup cost when not needed) ──────────────
 // node-tls-client wraps bogdanfinn/tls-client which impersonates Chrome's exact
@@ -69,14 +70,28 @@ async function getOrCreateSession(): Promise<any> {
 
     const { Session, ClientIdentifier, initTLS } = await import('node-tls-client');
     await initTLS();
-    _session = new Session({
+
+    // Apply centralized outbound transport (proxy / local address / direct).
+    const transport = loadNseTransportConfig();
+    const sessionOpts: Record<string, unknown> = {
       clientIdentifier: ClientIdentifier.chrome_120,
       timeout: 30_000,
       insecureSkipVerify: false,
       disableIPV6: true,
-    });
+    };
+    if (transport.proxy) {
+      sessionOpts.proxy = transport.proxy;
+      sessionOpts.isRotatingProxy = transport.isRotatingProxy;
+    }
+    if (transport.localAddress) {
+      sessionOpts.localAddress = transport.localAddress;
+    }
+
+    _session = new Session(sessionOpts);
     _initialized = true;
-    logger.info('TLS session initialized (Chrome/120 fingerprint, IPv6 disabled)');
+    logger.info(
+      `TLS session initialized (Chrome/120 fingerprint, IPv6 disabled, transport: ${transport.mode})`,
+    );
   } catch (e: any) {
     logger.warn(`TLS client init failed, falling back to native fetch: ${e.message}`);
     _session = null;
@@ -87,64 +102,96 @@ async function getOrCreateSession(): Promise<any> {
 
 export class NseSessionManager {
   private lastSessionReset: number = 0;
-  
+
   // Stats for health reporting
   public stats = {
     refreshCount: 0,
     failureCount: 0,
+    consecutiveFailures: 0,
     lastSuccess: null as Date | null,
-    lastFailure: null as Date | null
+    lastFailure: null as Date | null,
+    lastLatencyMs: null as number | null,
+    lastHttpStatus: null as number | null,
   };
+
+  /** The active outbound transport mode, surfaced on the health endpoint. */
+  public get transportMode(): TransportMode {
+    return loadNseTransportConfig().mode;
+  }
+
+  private recordSuccess(status: number, latencyMs: number): void {
+    this.stats.lastSuccess = new Date();
+    this.stats.consecutiveFailures = 0;
+    this.stats.lastHttpStatus = status;
+    this.stats.lastLatencyMs = latencyMs;
+  }
+
+  private recordFailure(status: number, latencyMs: number): void {
+    this.stats.failureCount++;
+    this.stats.consecutiveFailures++;
+    this.stats.lastFailure = new Date();
+    this.stats.lastHttpStatus = status;
+    this.stats.lastLatencyMs = latencyMs;
+    if (status === 403) {
+      logger.warn('HTTP 403 from NSE');
+    }
+    if (this.stats.consecutiveFailures >= 3) {
+      logger.warn('Provider unhealthy');
+    }
+  }
 
   /**
    * Forces a full session reset (called on 403 from the API endpoint).
    * This recreates the underlying node-tls-client session to get a fresh connection.
    */
   public async forceRefresh(): Promise<void> {
-    logger.info('Resetting TLS session due to 403...');
+    logger.info('Refreshing NSE session');
     this.stats.refreshCount++;
-    _session = null; 
+    _session = null;
     _initialized = false;
     await getOrCreateSession();
     this.lastSessionReset = Date.now();
+    logger.info('Session refreshed');
   }
 
   /**
    * Performs a GET request to the given URL using the TLS-impersonating session.
+   * All outbound NSE requests flow through here — the single transport chokepoint.
    */
   public async get(url: string): Promise<{ status: number; text: () => Promise<string> }> {
     const session = await getOrCreateSession();
+    const startTime = Date.now();
 
     if (!session) {
       // Fallback to native fetch (no TLS impersonation)
       const res = await fetch(url, { headers: API_HEADERS });
+      const latency = Date.now() - startTime;
       if (res.status === 200) {
-        this.stats.lastSuccess = new Date();
+        this.recordSuccess(res.status, latency);
       } else {
-        this.stats.failureCount++;
-        this.stats.lastFailure = new Date();
+        this.recordFailure(res.status, latency);
       }
       return {
         status: res.status,
-        text: () => res.text()
+        text: () => res.text(),
       };
     }
 
     const res = await session.get(url, {
       headers: API_HEADERS,
-      followRedirects: true
+      followRedirects: true,
     });
-    
+    const latency = Date.now() - startTime;
+
     if (res.status === 200) {
-      this.stats.lastSuccess = new Date();
+      this.recordSuccess(res.status, latency);
     } else {
-      this.stats.failureCount++;
-      this.stats.lastFailure = new Date();
+      this.recordFailure(res.status, latency);
     }
 
     return {
       status: res.status,
-      text: () => res.text()
+      text: () => res.text(),
     };
   }
 

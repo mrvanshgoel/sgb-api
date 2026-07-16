@@ -21,15 +21,31 @@ export class MarketDataManager {
   }
 
   public getHealth() {
+    const s = nseSessionManager.stats;
+    // Derive a status from consecutive failures without touching response formats.
+    let status: 'healthy' | 'degraded' | 'dead';
+    if (s.consecutiveFailures === 0 && s.lastSuccess) status = 'healthy';
+    else if (s.consecutiveFailures >= 3) status = 'dead';
+    else if (s.consecutiveFailures > 0) status = 'degraded';
+    else status = 'healthy';
+
     return {
       provider: this.primaryProvider.name,
+      status,
+      // Service-liveness flag consumed by /health — the API is up even when
+      // NSE's IP-reputation block degrades the provider. Provider health is
+      // reported via `status` / `consecutiveFailures` on /provider/health.
       healthy: true,
+      transportMode: nseSessionManager.transportMode,
       cookieAgeSeconds: nseSessionManager.getCookieAgeSeconds(),
       cacheHitRate: this.calculateHitRate(),
       cacheStats: this.primaryProvider.stats,
-      sessionStats: nseSessionManager.stats,
-      lastSuccess: nseSessionManager.stats.lastSuccess?.toISOString() || null,
-      lastFailure: nseSessionManager.stats.lastFailure?.toISOString() || null,
+      sessionStats: s,
+      consecutiveFailures: s.consecutiveFailures,
+      lastLatencyMs: s.lastLatencyMs,
+      lastHttpStatus: s.lastHttpStatus,
+      lastSuccess: s.lastSuccess?.toISOString() || null,
+      lastFailure: s.lastFailure?.toISOString() || null,
     };
   }
 

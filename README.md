@@ -178,8 +178,58 @@ cp .env.example .env
 | `MARKET_DATA_PROVIDER` | `null` | `null` or `groww` |
 | `GROWW_ACCESS_TOKEN` / `GROWW_API_KEY` | — | Only if `MARKET_DATA_PROVIDER=groww` |
 | `MARKET_DATA_TTL` | `300` | Market cache TTL (seconds) |
+| `NSE_PROXY_URL` | — | Route NSE requests through an outbound proxy with a clean IP (see below) |
+| `NSE_PROXY_ROTATING` | — | `true` if that proxy rotates its exit IP per request |
+| `NSE_LOCAL_ADDRESS` | — | Bind NSE requests to a specific local source IP (see below) |
 
-Secrets are read from the environment only — **never commit a real `.env`** (it is git-ignored; only `.env.example` is tracked).
+Secrets are read from the environment only — **never commit a real `.env`** (it is git-ignored; only `.env.example` is tracked). Proxy credentials in `NSE_PROXY_URL` are never written to logs — startup logs the proxy host with credentials redacted.
+
+### NSE outbound networking (HTTP 403 on shared cloud IPs)
+
+The NSE market-data provider talks to `nseindia.com`, which sits behind **Akamai Bot Manager**. Akamai blocks requests originating from **shared cloud egress IPs** — the pooled outbound addresses used by Render, Heroku, and most PaaS free tiers. The exact same code that returns live quotes from a laptop returns **HTTP 403** from those shared IPs. This is an IP-reputation block, not a bug in the provider: the TLS fingerprint, headers, and session handling are already correct.
+
+The fix is a networking one — send NSE requests from an IP the upstream trusts. All outbound NSE requests flow through a single centralized transport layer configured entirely by environment variables. With **nothing set**, behavior is unchanged (direct connection). Set **exactly one** of the following (they are mutually exclusive; config is validated at startup and an invalid value stops the process rather than silently 403-ing later):
+
+**Option A — outbound proxy with a clean/dedicated IP.** Route NSE traffic through a proxy that owns a residential or dedicated datacenter IP. Supports `http`, `https`, `socks5`, `socks5h`:
+
+```env
+NSE_PROXY_URL=http://user:pass@proxy.example.com:8080
+NSE_PROXY_ROTATING=true   # optional, if the proxy rotates its exit IP
+```
+
+**Option B — dedicated/static egress IP on the host.** If you deploy on infrastructure that gives the instance its own static outbound IP (a VPS, a Render instance with a static outbound IP add-on, an AWS NAT gateway with an allocated EIP, a host with multiple NICs), bind outbound sockets to that source address:
+
+```env
+NSE_LOCAL_ADDRESS=203.0.113.10
+```
+
+No application code changes are needed for either option — only environment variables. On startup the active mode is logged as `Transport: Default`, `Transport: Proxy (…)`, or `Transport: Local Address (…)`.
+
+### Verifying the provider is healthy
+
+`GET /provider/health` reports the live state of the NSE provider:
+
+```bash
+curl http://localhost:3000/provider/health
+```
+
+```jsonc
+{
+  "nse": {
+    "provider": "NSE Official",
+    "status": "healthy",          // healthy | degraded | dead
+    "transportMode": "Default",   // active outbound transport
+    "lastSuccess": "2026-07-16T...",
+    "lastFailure": null,
+    "lastLatencyMs": 412,         // last request latency
+    "lastHttpStatus": 200,        // last upstream HTTP status
+    "consecutiveFailures": 0
+  }
+}
+```
+
+A healthy deployment shows `status: "healthy"`, `lastHttpStatus: 200`, and `consecutiveFailures: 0`. A run of `lastHttpStatus: 403` with rising `consecutiveFailures` is the shared-IP block described above — configure `NSE_PROXY_URL` or `NSE_LOCAL_ADDRESS`. Fetch a quote first (e.g. `GET /price/SGBJUL28IV`) so the stats reflect a real request.
+
 
 ### Bare metal / VM
 

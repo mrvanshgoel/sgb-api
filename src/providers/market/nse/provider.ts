@@ -17,7 +17,7 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
       const startTime = Date.now();
       const data = await this.fetchData(symbol);
       const latency = Date.now() - startTime;
-      logger.info(`NSE quote received for ${symbol} (${latency}ms)`);
+      logger.info(`Quote succeeded in ${latency} ms`);
 
       const parsed = this.parseResponse(data, symbol);
       parsed.quote.latencyMs = latency;
@@ -26,12 +26,11 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
       // Retry once on 401/403 — indicates session needs refresh
       if (e.message.includes('401') || e.message.includes('403')) {
         try {
-          logger.warn('NSE returned 403, refreshing session...');
           await nseSessionManager.forceRefresh();
           const startTime = Date.now();
           const data = await this.fetchData(symbol);
           const latency = Date.now() - startTime;
-          logger.info(`NSE quote received for ${symbol} (${latency}ms)`);
+          logger.info(`Quote succeeded in ${latency} ms`);
 
           const parsed = this.parseResponse(data, symbol);
           parsed.quote.latencyMs = latency;
@@ -66,7 +65,7 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
   private async fetchData(symbol: string): Promise<any> {
     const url = `https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType=N&series=GB&symbol=${symbol}`;
 
-    logger.info(`Fetching live quote: ${symbol}`);
+    logger.info(`Requesting live quote ${symbol}`);
     const res = await nseSessionManager.get(url);
 
     if (res.status === 401 || res.status === 403) {

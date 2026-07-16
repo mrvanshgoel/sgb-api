@@ -4,8 +4,13 @@ import { config } from './config/index.js';
 import { buildApp } from './build-app.js';
 import { buildDefaultDeps } from './container.js';
 import { logger } from './utils/logger.js';
+import { initNseTransport } from './providers/market/nse/transport.js';
 
 async function main(): Promise<void> {
+  // Validate outbound-networking config up front and log the active transport
+  // mode. Throws on invalid config so we fail fast instead of 403-ing later.
+  initNseTransport();
+
   const deps = await buildDefaultDeps();
   const app = await buildApp(deps);
 
