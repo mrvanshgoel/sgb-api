@@ -1,5 +1,5 @@
 import { MarketPriceProvider } from '../../interfaces.js';
-import type { SGBRecord, FullMarketData } from '../../../types/index.js';
+import type { SGBRecord, FullMarketData, SgbAnalytics } from '../../../types/index.js';
 import { logger } from '../../../utils/logger.js';
 
 // ─── SGBAnalyzer fallback provider ─────────────────────────────────────────
@@ -47,6 +47,21 @@ interface SgbaRow {
   askPrice: number | null; // best sell-side quote (NOT a last traded price)
   avgTradingVolume7d: number | null; // rolling 7-day average (NOT day volume)
   isin: string | null;
+  // Valuation columns surfaced verbatim as analytics (rendered-page names below).
+  issuePrice: number | null;
+  maturityDate: string | null;
+  yearsToMaturity: number | null;
+  interestDate1: string | null;
+  interestDate2: string | null;
+  interestPayable: number | null; // % p.a. — already a percentage on the page
+  interestValue: number | null;
+  remainingPayments: number | null;
+  totalRemainingInterest: number | null;
+  pvFutureInterest: number | null;
+  fairValue: number | null;
+  discountToFairValue: number | null; // CSV fraction; page shows × 100
+  discountToGoldPrice: number | null; // CSV fraction; page shows × 100
+  totalYieldToMaturity: number | null; // CSV fraction; page shows × 100
 }
 
 export class SgbAnalyzerProvider implements MarketPriceProvider {
@@ -107,6 +122,113 @@ export class SgbAnalyzerProvider implements MarketPriceProvider {
     return results;
   }
 
+  /** Full SGBAnalyzer valuation analytics for one symbol (rendered-page names). */
+  public async getAnalytics(record: SGBRecord): Promise<SgbAnalytics> {
+    const symbol = record.tradingSymbol;
+    if (!symbol) {
+      return this.createNullAnalytics('(unknown)', 'No trading symbol');
+    }
+    try {
+      const rows = await this.loadRows();
+      const row = rows.get(symbol.toUpperCase());
+      if (!row) {
+        return this.createNullAnalytics(symbol, 'Symbol not listed on SGBAnalyzer');
+      }
+      return this.mapAnalytics(symbol, row);
+    } catch (e: any) {
+      logger.warn(`SGBAnalyzer analytics request failed: ${e.message}`);
+      return this.createNullAnalytics(symbol, e.message);
+    }
+  }
+
+  public async getAllAnalytics(records: SGBRecord[]): Promise<Map<string, SgbAnalytics>> {
+    const results = new Map<string, SgbAnalytics>();
+    let rows: Map<string, SgbaRow>;
+    try {
+      rows = await this.loadRows();
+    } catch (e: any) {
+      logger.warn(`SGBAnalyzer analytics request failed: ${e.message}`);
+      for (const record of records) {
+        if (record.tradingSymbol) {
+          results.set(record.tradingSymbol, this.createNullAnalytics(record.tradingSymbol, e.message));
+        }
+      }
+      return results;
+    }
+
+    for (const record of records) {
+      const symbol = record.tradingSymbol;
+      if (!symbol) continue;
+      const row = rows.get(symbol.toUpperCase());
+      results.set(
+        symbol,
+        row ? this.mapAnalytics(symbol, row) : this.createNullAnalytics(symbol, 'Symbol not listed on SGBAnalyzer')
+      );
+    }
+    return results;
+  }
+
+  private mapAnalytics(symbol: string, row: SgbaRow): SgbAnalytics {
+    // Percentages are surfaced as the rendered page shows them: the CSV stores
+    // fractions, the page shows them × 100 (0.0247 -> 2.47). Interest Payable is
+    // already a percentage on the page ("2.5% p.a."), so it is left as-is.
+    return {
+      symbol,
+      isin: row.isin,
+      currentPrice: row.askPrice,
+      fairValue: row.fairValue,
+      issuePrice: row.issuePrice,
+      discountPercent: this.toPercent(row.discountToFairValue),
+      yieldYtmPercent: this.toPercent(row.totalYieldToMaturity),
+      discountToGoldPercent: this.toPercent(row.discountToGoldPrice),
+      yearsToMaturity: row.yearsToMaturity,
+      maturity: row.maturityDate,
+      interestRate: row.interestPayable,
+      interestPerUnit: row.interestValue,
+      nextInterest: row.interestDate1,
+      interestDate2: row.interestDate2,
+      remainingPayments: row.remainingPayments,
+      totalInterestLeft: row.totalRemainingInterest,
+      pvFutureInterest: row.pvFutureInterest,
+      avgTradingVolume: row.avgTradingVolume7d,
+      source: this.name,
+      cached: false,
+      reason: null,
+    };
+  }
+
+  private toPercent(fraction: number | null): number | null {
+    if (fraction === null) return null;
+    // Round to 2 decimals to match the rendered page (2.47%, 1.32%, 0.92%).
+    return Math.round(fraction * 100 * 100) / 100;
+  }
+
+  private createNullAnalytics(symbol: string, reason: string): SgbAnalytics {
+    return {
+      symbol,
+      isin: null,
+      currentPrice: null,
+      fairValue: null,
+      issuePrice: null,
+      discountPercent: null,
+      yieldYtmPercent: null,
+      discountToGoldPercent: null,
+      yearsToMaturity: null,
+      maturity: null,
+      interestRate: null,
+      interestPerUnit: null,
+      nextInterest: null,
+      interestDate2: null,
+      remainingPayments: null,
+      totalInterestLeft: null,
+      pvFutureInterest: null,
+      avgTradingVolume: null,
+      source: this.name,
+      cached: false,
+      reason,
+    };
+  }
+
   private async loadRows(): Promise<Map<string, SgbaRow>> {
     const now = Date.now();
     if (this.cachedRows && now - this.cachedAt < CSV_TTL_MS) {
@@ -160,20 +282,52 @@ export class SgbAnalyzerProvider implements MarketPriceProvider {
     if (lines.length < 2) return map;
 
     const header = this.splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
-    const iSymbol = header.indexOf('symbol');
-    const iIsin = header.indexOf('isin');
-    const iAsk = header.indexOf('ask price');
-    const iVol = header.indexOf('average trading volume');
+    const idx = (name: string) => header.indexOf(name);
+    const iSymbol = idx('symbol');
+    const iIsin = idx('isin');
+    const iAsk = idx('ask price');
+    const iVol = idx('average trading volume');
+    const iIssue = idx('issue price');
+    const iMaturityDate = idx('maturity date');
+    const iYears = idx('years to maturity');
+    const iIntDate1 = idx('interest date 1');
+    const iIntDate2 = idx('interest date 2');
+    const iIntPayable = idx('interest payable');
+    const iIntValue = idx('interest value');
+    const iRemaining = idx('no of remaining interest payments');
+    const iTotalInterest = idx('total remaining interest');
+    const iPvInterest = idx('present value of future interest payments');
+    const iFair = idx('fair value');
+    const iDiscFair = idx('discount to fair value');
+    const iDiscGold = idx('discount to gold price');
+    const iYtm = idx('total yield to maturity');
     if (iSymbol === -1) return map;
+
+    const num = (i: number, cells: string[]) => this.toNumber(i === -1 ? undefined : cells[i]);
+    const str = (i: number, cells: string[]) => (i === -1 ? '' : (cells[i] ?? '')).trim() || null;
 
     for (let i = 1; i < lines.length; i++) {
       const cells = this.splitCsvLine(lines[i]);
       const symbol = (cells[iSymbol] ?? '').trim().toUpperCase();
       if (!symbol) continue;
       map.set(symbol, {
-        askPrice: this.toNumber(iAsk === -1 ? undefined : cells[iAsk]),
-        avgTradingVolume7d: this.toNumber(iVol === -1 ? undefined : cells[iVol]),
-        isin: (iIsin === -1 ? '' : (cells[iIsin] ?? '')).trim() || null,
+        askPrice: num(iAsk, cells),
+        avgTradingVolume7d: num(iVol, cells),
+        isin: str(iIsin, cells),
+        issuePrice: num(iIssue, cells),
+        maturityDate: str(iMaturityDate, cells),
+        yearsToMaturity: num(iYears, cells),
+        interestDate1: str(iIntDate1, cells),
+        interestDate2: str(iIntDate2, cells),
+        interestPayable: num(iIntPayable, cells),
+        interestValue: num(iIntValue, cells),
+        remainingPayments: num(iRemaining, cells),
+        totalRemainingInterest: num(iTotalInterest, cells),
+        pvFutureInterest: num(iPvInterest, cells),
+        fairValue: num(iFair, cells),
+        discountToFairValue: num(iDiscFair, cells),
+        discountToGoldPrice: num(iDiscGold, cells),
+        totalYieldToMaturity: num(iYtm, cells),
       });
     }
     return map;

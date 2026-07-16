@@ -1,4 +1,4 @@
-import type { SGBRecord, FullMarketData } from '../../types/index.js';
+import type { SGBRecord, FullMarketData, SgbAnalytics } from '../../types/index.js';
 import type { MarketPriceProvider } from '../interfaces.js';
 import { CachedMarketPriceProvider } from './cache.js';
 import { NseMarketPriceProvider } from './nse/provider.js';
@@ -9,6 +9,9 @@ import { logger } from '../../utils/logger.js';
 export class MarketDataManager {
   private primaryProvider: CachedMarketPriceProvider;
   private fallbackProvider: CachedMarketPriceProvider;
+  // Raw SGBAnalyzer provider kept for valuation analytics, which are sourced
+  // only from its CSV and are not part of the NSE-first quote failover path.
+  private analyticsProvider: SgbAnalyzerProvider;
 
   // Providers may be injected for testing. In production both are omitted and
   // the real NSE + SGBAnalyzer providers are used with their default caching.
@@ -28,6 +31,21 @@ export class MarketDataManager {
       stale403Ms: 10 * 1000,
       cache403Ms: 10 * 1000,
     });
+
+    // Reuse the fallback instance for analytics when it is a real SGBAnalyzer
+    // provider (production / matching tests); otherwise stand up a dedicated one.
+    this.analyticsProvider =
+      sgbaProvider instanceof SgbAnalyzerProvider ? sgbaProvider : new SgbAnalyzerProvider();
+  }
+
+  /** SGBAnalyzer valuation analytics for one symbol (rendered-page field names). */
+  public async getAnalytics(record: SGBRecord): Promise<SgbAnalytics> {
+    return this.analyticsProvider.getAnalytics(record);
+  }
+
+  /** Bulk SGBAnalyzer valuation analytics keyed by trading symbol. */
+  public async getAllAnalytics(records: SGBRecord[]): Promise<Map<string, SgbAnalytics>> {
+    return this.analyticsProvider.getAllAnalytics(records);
   }
 
   public async getQuote(record: SGBRecord): Promise<FullMarketData> {

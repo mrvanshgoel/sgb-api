@@ -117,6 +117,37 @@ export interface FullMarketData {
   trade: TradeInfo;
 }
 
+/**
+ * SGBAnalyzer valuation analytics, named after the rendered detail page
+ * (/sgb/[symbol]) rather than the raw CSV columns. These are VALUATION metrics,
+ * not live trades. Percentage fields are expressed as the rendered page shows
+ * them (e.g. 2.47 for "2.47%"), i.e. the CSV fraction × 100. Any field the CSV
+ * omits stays null — never inferred, estimated, or calculated.
+ */
+export interface SgbAnalytics {
+  symbol: string;
+  isin: string | null;
+  currentPrice: number | null; // CSV "Ask Price" — best sell-side quote
+  fairValue: number | null; // CSV "Fair Value" — computed valuation
+  issuePrice: number | null; // CSV "Issue Price"
+  discountPercent: number | null; // CSV "Discount to Fair Value" × 100
+  yieldYtmPercent: number | null; // CSV "Total Yield to Maturity" × 100
+  discountToGoldPercent: number | null; // CSV "Discount to Gold Price" × 100
+  yearsToMaturity: number | null; // CSV "Years To Maturity"
+  maturity: string | null; // CSV "Maturity Date" (e.g. "Jul 2028")
+  interestRate: number | null; // CSV "Interest Payable" — % p.a. (already a percent)
+  interestPerUnit: number | null; // CSV "Interest Value"
+  nextInterest: string | null; // CSV "Interest Date 1"
+  interestDate2: string | null; // CSV "Interest Date 2"
+  remainingPayments: number | null; // CSV "No of Remaining Interest Payments"
+  totalInterestLeft: number | null; // CSV "Total Remaining Interest"
+  pvFutureInterest: number | null; // CSV "Present Value of Future Interest Payments"
+  avgTradingVolume: number | null; // CSV "Average Trading Volume" — rolling 7-day average
+  source: string;
+  cached: boolean;
+  reason: string | null; // set when analytics are unavailable for the symbol
+}
+
 /** Gold & Silver price result — never throws, always returns this shape */
 export interface GoldPriceResult {
   goldPricePerGram: number | null;

@@ -161,3 +161,64 @@ describe('SgbAnalyzerProvider CSV mapping', () => {
     }
   });
 });
+
+describe('SgbAnalyzerProvider analytics mapping', () => {
+  // Full 18-column CSV row for SGBTESTA mirroring the live SGBJUL28IV values.
+  const CSV = [
+    '"Symbol","ISIN","Issue Price","Maturity Date","Years To Maturity","Interest Date 1","Interest Date 2","Interest Payable","Interest Value","No of Remaining Interest Payments","Total Remaining Interest","Present Value of Future Interest Payments","Fair Value","Ask Price","Average Trading Volume","Discount to Fair Value","Discount to Gold Price","Total Yield to Maturity"',
+    '"SGBTESTA","IN0020200146",4852,"Jul 2028",1.995442009893455,"July14","January14",2.5,60.65,4,242.6,225.4420181304492,14396.442018130449,14040.82,374.42857142857144,0.024702076921685866,0.009186366523181165,0.013218227334266253',
+  ].join('\n');
+
+  it('maps every CSV column to rendered-page field names, percentages × 100', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => CSV });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const provider = new SgbAnalyzerProvider();
+      const a = await provider.getAnalytics(fixtureA);
+
+      expect(a.symbol).toBe(fixtureA.tradingSymbol);
+      expect(a.isin).toBe('IN0020200146');
+      expect(a.currentPrice).toBe(14040.82); // Ask Price — best quote, not LTP
+      expect(a.fairValue).toBe(14396.442018130449);
+      expect(a.issuePrice).toBe(4852);
+      // Percentages rendered as on the page: fraction × 100, 2-dp rounded.
+      expect(a.discountPercent).toBe(2.47);
+      expect(a.yieldYtmPercent).toBe(1.32);
+      expect(a.discountToGoldPercent).toBe(0.92);
+      expect(a.yearsToMaturity).toBe(1.995442009893455);
+      expect(a.maturity).toBe('Jul 2028');
+      expect(a.interestRate).toBe(2.5); // already a percentage on the page
+      expect(a.interestPerUnit).toBe(60.65);
+      expect(a.nextInterest).toBe('July14');
+      expect(a.interestDate2).toBe('January14');
+      expect(a.remainingPayments).toBe(4);
+      expect(a.totalInterestLeft).toBe(242.6);
+      expect(a.pvFutureInterest).toBe(225.4420181304492);
+      expect(a.avgTradingVolume).toBe(374.42857142857144);
+      expect(a.source).toBe('SGBAnalyzer');
+      expect(a.reason).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('returns null-shaped analytics with a reason when the symbol is absent', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '"Symbol","ISIN","Ask Price"\n"SOMEOTHER","IN0000000000",100',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const provider = new SgbAnalyzerProvider();
+      const a = await provider.getAnalytics(fixtureA);
+      expect(a.currentPrice).toBeNull();
+      expect(a.discountPercent).toBeNull();
+      expect(a.reason).toContain('not listed');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

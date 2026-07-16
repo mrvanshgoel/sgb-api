@@ -17,6 +17,7 @@ import {
   providerHealthJson,
   lookupResultJson,
   quoteResponseJson,
+  analyticsResponseJson,
   marketDepthJson,
   tradeInfoJson,
   statsJson,
@@ -256,7 +257,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
       const { marketDataManager } = await import('../providers/market/manager.js');
       const data = await marketDataManager.getQuote(record);
       const quote = data.quote;
-      
+      const analytics = await marketDataManager.getAnalytics(record);
+
       return {
         symbol: record.tradingSymbol,
         marketPrice: quote.lastPrice,
@@ -271,7 +273,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
         priceTimestamp: quote.lastUpdated,
         priceDelay: quote.cached ? 'Delayed' : 'Real-time',
         priceStatus: quote.liveAvailable ? 'verified' : 'unavailable',
-        reason: quote.reason || null
+        reason: quote.reason || null,
+        analytics
       };
     },
   );
@@ -347,8 +350,41 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
       const start = Date.now();
       const data = await marketDataManager.getQuote(record);
       data.quote.latencyMs = Date.now() - start;
-      
-      return { symbol: record.tradingSymbol, market: data.quote };
+
+      const analytics = await marketDataManager.getAnalytics(record);
+      return { symbol: record.tradingSymbol, market: data.quote, analytics };
+    }
+  );
+
+  // ── GET /analytics/:symbol ────────────────────────────────────────────
+  // SGBAnalyzer valuation analytics (rendered-page field names). Valuation
+  // metrics, not live trades — see SgbAnalyzerProvider for the exact mapping.
+  app.get<{ Params: { symbol: string } }>(
+    '/analytics/:symbol',
+    { schema: { response: { 200: analyticsResponseJson, 404: errorJson } } },
+    async (request, reply) => {
+      const record = seriesProvider.getBySymbol(request.params.symbol);
+      if (!record) return reply.status(404).send({ error: 'Not Found', message: 'Symbol not found', statusCode: 404 });
+
+      const { marketDataManager } = await import('../providers/market/manager.js');
+      const analytics = await marketDataManager.getAnalytics(record);
+      return { symbol: record.tradingSymbol, analytics };
+    }
+  );
+
+  // ── GET /analytics ────────────────────────────────────────────────────
+  // Bulk analytics. Without ?symbols= returns every series in the dataset.
+  app.get<{ Querystring: { symbols?: string } }>(
+    '/analytics',
+    async (request) => {
+      const { marketDataManager } = await import('../providers/market/manager.js');
+      const records = request.query.symbols
+        ? request.query.symbols.split(',').map((s) => s.trim()).map((s) => seriesProvider.getBySymbol(s)).filter((r) => r !== null) as any[]
+        : seriesProvider.getAll();
+      const dataMap = await marketDataManager.getAllAnalytics(records);
+      const results: any[] = [];
+      dataMap.forEach((analytics, symbol) => results.push({ symbol, analytics }));
+      return { results };
     }
   );
 

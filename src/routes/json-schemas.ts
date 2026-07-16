@@ -4,6 +4,41 @@
 
 const nullable = (type: string) => ({ type: [type, 'null'] });
 
+export const sgbAnalyticsJson = {
+  type: 'object',
+  properties: {
+    symbol: { type: 'string' },
+    isin: nullable('string'),
+    currentPrice: nullable('number'),
+    fairValue: nullable('number'),
+    issuePrice: nullable('number'),
+    discountPercent: nullable('number'),
+    yieldYtmPercent: nullable('number'),
+    discountToGoldPercent: nullable('number'),
+    yearsToMaturity: nullable('number'),
+    maturity: nullable('string'),
+    interestRate: nullable('number'),
+    interestPerUnit: nullable('number'),
+    nextInterest: nullable('string'),
+    interestDate2: nullable('string'),
+    remainingPayments: nullable('number'),
+    totalInterestLeft: nullable('number'),
+    pvFutureInterest: nullable('number'),
+    avgTradingVolume: nullable('number'),
+    source: { type: 'string' },
+    cached: { type: 'boolean' },
+    reason: nullable('string')
+  }
+} as const;
+
+export const analyticsResponseJson = {
+  type: 'object',
+  properties: {
+    symbol: { type: 'string' },
+    analytics: sgbAnalyticsJson
+  }
+} as const;
+
 export const couponPaymentJson = {
   type: 'object',
   properties: {
@@ -90,6 +125,7 @@ export const marketPriceJson = {
     priceDelay: { type: ['string', 'null'], enum: ['Real-time', 'Delayed', null] },
     priceStatus: { type: 'string', enum: ['verified', 'delayed', 'unavailable'] },
     reason: nullable('string'),
+    analytics: sgbAnalyticsJson,
   },
 } as const;
 
@@ -202,7 +238,8 @@ export const quoteResponseJson = {
   type: 'object',
   properties: {
     symbol: { type: 'string' },
-    market: quoteJson
+    market: quoteJson,
+    analytics: sgbAnalyticsJson
   }
 } as const;
 
