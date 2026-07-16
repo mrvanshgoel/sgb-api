@@ -39,6 +39,7 @@
     "dotenv": "^17.4.2",
     "fastify": "^5.10.0",
     "fuse.js": "^7.5.0",
+    "node-tls-client": "2.1.0",
     "typescript": "^6.0.3",
     "zod": "^4.4.3"
   },

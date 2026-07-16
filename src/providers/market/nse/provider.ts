@@ -14,26 +14,25 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
     }
 
     try {
-      logger.info(`Fetching live quote: ${symbol}`);
       const startTime = Date.now();
-      let data = await this.fetchData(symbol);
+      const data = await this.fetchData(symbol);
       const latency = Date.now() - startTime;
       logger.info(`NSE quote received for ${symbol} (${latency}ms)`);
-      
+
       const parsed = this.parseResponse(data, symbol);
       parsed.quote.latencyMs = latency;
       return parsed;
     } catch (e: any) {
-      // Retry once on 401/403 which indicates expired cookies
+      // Retry once on 401/403 — indicates session needs refresh
       if (e.message.includes('401') || e.message.includes('403')) {
         try {
           logger.warn('NSE returned 403, refreshing session...');
           await nseSessionManager.forceRefresh();
           const startTime = Date.now();
-          let data = await this.fetchData(symbol);
+          const data = await this.fetchData(symbol);
           const latency = Date.now() - startTime;
           logger.info(`NSE quote received for ${symbol} (${latency}ms)`);
-          
+
           const parsed = this.parseResponse(data, symbol);
           parsed.quote.latencyMs = latency;
           return parsed;
@@ -65,40 +64,27 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
   }
 
   private async fetchData(symbol: string): Promise<any> {
-    const cookies = await nseSessionManager.getCookie();
-    const url = `https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType=N&series=GB&symbol=${symbol}`;
-    
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Connection': 'keep-alive',
-      'Referer': 'https://www.nseindia.com/',
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-origin',
-      'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-      'Sec-Ch-Ua-Mobile': '?0',
-      'Sec-Ch-Ua-Platform': '"Windows"',
-      'Cookie': cookies
-    };
+    // Ensure session cookie is fresh (no-op if already valid)
+    await nseSessionManager.ensureSession();
 
-    const res = await fetch(url, { headers });
-    
+    const url = `https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType=N&series=GB&symbol=${symbol}`;
+
+    logger.info(`Fetching live quote: ${symbol}`);
+    const res = await nseSessionManager.get(url);
+
     if (res.status === 401 || res.status === 403) {
       throw new Error(`NSE returned ${res.status}`);
     }
-    
+
     if (res.status !== 200) {
       throw new Error(`NSE returned ${res.status}`);
     }
-    
+
     const text = await res.text();
     try {
       return JSON.parse(text);
-    } catch(e) {
-      throw new Error("Failed to parse NSE JSON");
+    } catch (e) {
+      throw new Error('Failed to parse NSE JSON');
     }
   }
 

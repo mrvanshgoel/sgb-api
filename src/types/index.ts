@@ -105,6 +105,7 @@ export interface MarketPriceResult {
   lastUpdated: string | null;
   source: string;
   cached: boolean;
+  cacheAgeSeconds?: number;
   latencyMs: number;
   liveAvailable: boolean;
   reason?: string;
@@ -126,6 +127,7 @@ export interface GoldPriceResult {
   timestamp: string | null;
   source: string | null;
   cached: boolean;
+  cacheAgeSeconds?: number;
   priceStatus: 'verified' | 'delayed' | 'unavailable';
   reason: string | null;
 }

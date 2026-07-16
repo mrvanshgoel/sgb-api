@@ -29,12 +29,14 @@ export interface MarketPriceProvider {
   getPrice(record: SGBRecord): Promise<FullMarketData>;
   /** MUST NOT throw. Returns a map of symbol to FullMarketData */
   getMultiple(records: SGBRecord[]): Promise<Map<string, FullMarketData>>;
+  getHealth?(): any;
   readonly name: string;
 }
 
 export interface GoldProvider {
   /** MUST NOT throw. On any failure, return a null-shaped GoldPriceResult. */
   getPrice(): Promise<GoldPriceResult>;
+  getHealth?(): any;
   readonly name: string;
 }
 

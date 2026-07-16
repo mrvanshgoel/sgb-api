@@ -13,6 +13,7 @@ import {
   goldPriceJson,
   errorJson,
   healthJson,
+  providerHealthJson,
   lookupResultJson,
   quoteResponseJson,
   marketDepthJson,
@@ -393,10 +394,14 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
     }
   );
 
-  // ── GET /provider/health ──────────────────────────────────────────────
-  app.get('/provider/health', { schema: { response: { 200: healthJson } } }, async () => {
+  // ─── GET /provider/health ──────────────────────────────────────────────────
+  app.get('/provider/health', { schema: { response: { 200: providerHealthJson } } }, async () => {
     const { marketDataManager } = await import('../providers/market/manager.js');
-    return marketDataManager.getHealth();
+    
+    return {
+      nse: marketDataManager.getHealth(),
+      gold: deps.goldProvider.getHealth?.() || { status: 'dead', provider: 'None', consecutiveFailures: 0, lastSuccess: null, lastFailure: null }
+    };
   });
   
   // ── GET /stats ────────────────────────────────────────────────────────

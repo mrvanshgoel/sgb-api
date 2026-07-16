@@ -4,11 +4,15 @@ import { logger } from '../../utils/logger.js';
 
 interface CacheEntry {
   data: FullMarketData;
+  timestamp: number;
+  staleAt: number;
   expiresAt: number;
 }
 
 export class CachedMarketPriceProvider implements MarketPriceProvider {
   private cache = new Map<string, CacheEntry>();
+  // To prevent multiple background fetches for the same symbol
+  private activeFetches = new Map<string, Promise<FullMarketData>>();
   
   public stats = {
     hit: 0,
@@ -17,14 +21,65 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
     expired: 0
   };
 
-  private readonly TTL_LIVE_MS = 30 * 1000; // 30 seconds
-  private readonly TTL_NEGATIVE_MS = 10 * 60 * 1000; // 10 minutes
-  private readonly TTL_403_MS = 10 * 1000; // 10 seconds
+  private readonly STALE_LIVE_MS = 60 * 1000; // 60 seconds
+  private readonly CACHE_LIVE_MS = 60 * 60 * 1000; // 1 hour
+
+  private readonly STALE_NEGATIVE_MS = 10 * 60 * 1000; // 10 mins
+  private readonly CACHE_NEGATIVE_MS = 60 * 60 * 1000; // 1 hour
+
+  private readonly STALE_403_MS = 10 * 1000; // 10 seconds
+  private readonly CACHE_403_MS = 10 * 1000; // 10 seconds
   
   constructor(private inner: MarketPriceProvider) {}
 
   get name(): string {
     return this.inner.name;
+  }
+
+  private setCache(symbol: string, result: FullMarketData) {
+    const now = Date.now();
+    let staleMs = result.quote.liveAvailable ? this.STALE_LIVE_MS : this.STALE_NEGATIVE_MS;
+    let cacheMs = result.quote.liveAvailable ? this.CACHE_LIVE_MS : this.CACHE_NEGATIVE_MS;
+    
+    if (result.quote.reason?.includes('403') || result.quote.reason?.includes('401')) {
+       staleMs = this.STALE_403_MS;
+       cacheMs = this.CACHE_403_MS;
+    }
+
+    this.cache.set(symbol, {
+      data: result,
+      timestamp: now,
+      staleAt: now + staleMs,
+      expiresAt: now + cacheMs
+    });
+  }
+
+  private async backgroundFetch(record: SGBRecord) {
+    const symbol = record.tradingSymbol!;
+    if (this.activeFetches.has(symbol)) return;
+
+    const promise = this.inner.getPrice(record).then(result => {
+      if (result.quote.liveAvailable) {
+         logger.info(`Background refresh successful for ${symbol}`);
+         this.setCache(symbol, result);
+      } else {
+         // Don't overwrite a good cached value with a failed live attempt
+         logger.warn(`Background refresh failed for ${symbol}: ${result.quote.reason}`);
+         // If it's a 403, we should update the cache to prevent infinite loops, but maybe with a short TTL
+         const existing = this.cache.get(symbol);
+         if (existing && existing.data.quote.liveAvailable && (result.quote.reason?.includes('403') || result.quote.reason?.includes('401'))) {
+           // We have a good value, but just got a 403. Let's extend the stale time slightly so we don't spam
+           existing.staleAt = Date.now() + this.STALE_403_MS;
+         } else {
+           this.setCache(symbol, result);
+         }
+      }
+      return result;
+    }).finally(() => {
+      this.activeFetches.delete(symbol);
+    });
+
+    this.activeFetches.set(symbol, promise);
   }
 
   public async getPrice(record: SGBRecord): Promise<FullMarketData> {
@@ -37,10 +92,17 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
     const cached = this.cache.get(symbol);
 
     if (cached) {
-      if (now < cached.expiresAt) {
+      const cacheAgeSeconds = Math.floor((now - cached.timestamp) / 1000);
+      const cachedData = { ...cached.data, quote: { ...cached.data.quote, cached: true, cacheAgeSeconds } };
+
+      if (now < cached.staleAt) {
         this.stats.hit++;
-        logger.info(`Cache hit: ${symbol}`);
-        return { ...cached.data, quote: { ...cached.data.quote, cached: true } };
+        return cachedData;
+      } else if (now < cached.expiresAt) {
+        this.stats.stale++;
+        logger.info(`Stale cache hit for ${symbol}, triggering background refresh`);
+        this.backgroundFetch(record).catch(err => logger.error(err as Error));
+        return cachedData;
       } else {
         this.stats.expired++;
       }
@@ -48,29 +110,22 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
       this.stats.miss++;
     }
 
-    // Fetch fresh data
-    const result = await this.inner.getPrice(record);
-    
-    // Set TTL based on whether data was successfully retrieved
-    let ttl = result.quote.liveAvailable ? this.TTL_LIVE_MS : this.TTL_NEGATIVE_MS;
-    if (result.quote.reason?.includes('403') || result.quote.reason?.includes('401')) {
-       ttl = this.TTL_403_MS;
+    // Fetch fresh data if miss or expired
+    const activeFetch = this.activeFetches.get(symbol);
+    if (activeFetch) {
+       const result = await activeFetch;
+       return { ...result, quote: { ...result.quote, cached: false } };
     }
-    
-    if (result.quote.liveAvailable) {
-       // Only log successful live requests here since provider already logs fetching/errors
-       logger.info(`Live quote received for ${symbol}`);
-    } else if (cached) {
-       logger.warn(`Using cached quote for ${symbol} due to live provider failure`);
-       return { ...cached.data, quote: { ...cached.data.quote, cached: true } };
-    }
-    
-    this.cache.set(symbol, {
-      data: result,
-      expiresAt: now + ttl
-    });
 
-    return result;
+    const promise = this.inner.getPrice(record).then(result => {
+      this.setCache(symbol, result);
+      return result;
+    }).finally(() => {
+      this.activeFetches.delete(symbol);
+    });
+    
+    this.activeFetches.set(symbol, promise);
+    return await promise;
   }
 
   public async getMultiple(records: SGBRecord[]): Promise<Map<string, FullMarketData>> {
@@ -83,39 +138,51 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
       if (!symbol) continue;
 
       const cached = this.cache.get(symbol);
-      if (cached && now < cached.expiresAt) {
-        this.stats.hit++;
-        logger.info(`Cache hit: ${symbol}`);
-        results.set(symbol, { ...cached.data, quote: { ...cached.data.quote, cached: true } });
+      if (cached) {
+        const cacheAgeSeconds = Math.floor((now - cached.timestamp) / 1000);
+        const cachedData = { ...cached.data, quote: { ...cached.data.quote, cached: true, cacheAgeSeconds } };
+        
+        if (now < cached.staleAt) {
+          this.stats.hit++;
+          results.set(symbol, cachedData);
+        } else if (now < cached.expiresAt) {
+          this.stats.stale++;
+          logger.info(`Stale cache hit for ${symbol}, triggering background refresh`);
+          this.backgroundFetch(record).catch(err => logger.error(err as Error));
+          results.set(symbol, cachedData);
+        } else {
+          this.stats.expired++;
+          toFetch.push(record);
+        }
       } else {
-        if (cached) this.stats.expired++;
-        else this.stats.miss++;
+        this.stats.miss++;
         toFetch.push(record);
       }
     }
 
     if (toFetch.length > 0) {
+      // Grouping them all together. This might not be fully activeFetch-aware for bulk,
+      // but getMultiple doesn't use activeFetches. We just await inner.getMultiple.
       const fetchedResults = await this.inner.getMultiple(toFetch);
       for (const [symbol, data] of fetchedResults) {
-        const cached = this.cache.get(symbol);
-        
-        let ttl = data.quote.liveAvailable ? this.TTL_LIVE_MS : this.TTL_NEGATIVE_MS;
-        if (data.quote.reason?.includes('403') || data.quote.reason?.includes('401')) {
-           ttl = this.TTL_403_MS;
-        }
-        
-        if (data.quote.liveAvailable) {
-           logger.info(`Live quote received for ${symbol}`);
-           this.cache.set(symbol, { data, expiresAt: now + ttl });
-           results.set(symbol, data);
-        } else if (cached) {
-           logger.warn(`Using cached quote for ${symbol} due to live provider failure`);
-           this.cache.set(symbol, { data: cached.data, expiresAt: now + ttl });
-           results.set(symbol, { ...cached.data, quote: { ...cached.data.quote, cached: true } });
-        } else {
-           this.cache.set(symbol, { data, expiresAt: now + ttl });
-           results.set(symbol, data);
-        }
+         if (data.quote.liveAvailable) {
+            this.setCache(symbol, data);
+            results.set(symbol, data);
+         } else {
+            const existing = this.cache.get(symbol);
+            if (existing) {
+               // Extend TTL slightly if we already had a value but live failed
+               if (existing.data.quote.liveAvailable && (data.quote.reason?.includes('403') || data.quote.reason?.includes('401'))) {
+                  existing.staleAt = Date.now() + this.STALE_403_MS;
+               } else {
+                  this.setCache(symbol, data);
+               }
+               results.set(symbol, { ...existing.data, quote: { ...existing.data.quote, cached: true } });
+            } else {
+               this.setCache(symbol, data);
+               results.set(symbol, data);
+            }
+         }
       }
     }
 

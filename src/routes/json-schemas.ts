@@ -106,6 +106,7 @@ export const goldPriceJson = {
     timestamp: nullable('string'),
     source: nullable('string'),
     cached: { type: 'boolean' },
+    cacheAgeSeconds: { type: 'number' },
     priceStatus: { type: 'string', enum: ['verified', 'delayed', 'unavailable'] },
     reason: nullable('string'),
   },
@@ -133,6 +134,33 @@ export const healthJson = {
   },
 } as const;
 
+export const providerHealthJson = {
+  type: 'object',
+  properties: {
+    nse: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string' },
+        healthy: { type: 'boolean' },
+        cookieAgeSeconds: { type: 'number' },
+        cacheHitRate: { type: 'string' },
+        lastSuccess: nullable('string'),
+        lastFailure: nullable('string')
+      }
+    },
+    gold: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string' },
+        status: { type: 'string', enum: ['healthy', 'degraded', 'dead'] },
+        lastSuccess: nullable('string'),
+        lastFailure: nullable('string'),
+        consecutiveFailures: { type: 'integer' }
+      }
+    }
+  }
+} as const;
+
 export const lookupResultJson = {
   type: 'object',
   properties: {
@@ -158,6 +186,7 @@ export const quoteJson = {
     lastUpdated: nullable('string'),
     source: { type: 'string' },
     cached: { type: 'boolean' },
+    cacheAgeSeconds: { type: 'number' },
     latencyMs: { type: 'number' },
     liveAvailable: { type: 'boolean' },
     reason: { type: 'string' }

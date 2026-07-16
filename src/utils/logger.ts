@@ -1,5 +1,7 @@
 export const isDebug = process.env.DEBUG === 'true';
 
+const timers = new Map<string, number>();
+
 export const logger = {
   info: (msg: string) => console.log(`[INFO] ${msg}`),
   warn: (msg: string) => console.log(`[WARN] ${msg}`),
@@ -13,5 +15,16 @@ export const logger = {
   },
   debug: (msg: string) => {
     if (isDebug) console.log(`[DEBUG] ${msg}`);
+  },
+  time: (label: string) => {
+    timers.set(label, Date.now());
+  },
+  timeEnd: (label: string, message: string = label) => {
+    const start = timers.get(label);
+    if (start) {
+      const ms = Date.now() - start;
+      console.log(`[INFO] ${message} (${ms} ms)`);
+      timers.delete(label);
+    }
   }
 };

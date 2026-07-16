@@ -113,6 +113,7 @@ export const goldPriceResultSchema = z.object({
   timestamp: z.string().nullable(),
   source: z.string().nullable(),
   cached: z.boolean(),
+  cacheAgeSeconds: z.number().optional(),
   priceStatus: z.enum(['verified', 'delayed', 'unavailable']),
   reason: z.string().nullable(),
 });

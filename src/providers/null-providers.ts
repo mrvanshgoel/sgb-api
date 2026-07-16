@@ -65,4 +65,14 @@ export class NullGoldProvider implements GoldProvider {
   public async getPrice(): Promise<GoldPriceResult> {
     return nullGoldResult('No gold price provider configured. Set GOLD_PRICE_PROVIDER=metals with METALS_API_KEY or inject a provider (see README).');
   }
+
+  public getHealth() {
+    return {
+      status: 'dead',
+      provider: 'None',
+      consecutiveFailures: 0,
+      lastSuccess: null,
+      lastFailure: null
+    };
+  }
 }

@@ -211,15 +211,18 @@ describe('Cache', () => {
   it('InMemoryCache respects TTL semantics', async () => {
     const cache = new InMemoryCache();
     await cache.set('k', 'v', 60);
-    expect(await cache.get('k')).toBe('v');
+    expect((await cache.get('k'))?.value).toBe('v');
     await cache.delete('k');
     expect(await cache.get('k')).toBeNull();
+    await cache.set('k2', 'v2', -1); // Infinity
+    await cache.clear();
+    expect(await cache.get('k2')).toBeNull();
   });
 
-  it('ttl <= 0 means never expires', async () => {
+  test('ttl <= 0 means never expires', async () => {
     const cache = new InMemoryCache();
     await cache.set('k', 'v', 0);
-    expect(await cache.get('k')).toBe('v');
+    expect((await cache.get('k'))?.value).toBe('v');
   });
 
 
