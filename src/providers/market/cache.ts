@@ -21,16 +21,35 @@ export class CachedMarketPriceProvider implements MarketPriceProvider {
     expired: 0
   };
 
-  private readonly STALE_LIVE_MS = 60 * 1000; // 60 seconds
-  private readonly CACHE_LIVE_MS = 60 * 60 * 1000; // 1 hour
+  private readonly STALE_LIVE_MS: number;
+  private readonly CACHE_LIVE_MS: number;
 
-  private readonly STALE_NEGATIVE_MS = 10 * 60 * 1000; // 10 mins
-  private readonly CACHE_NEGATIVE_MS = 60 * 60 * 1000; // 1 hour
+  private readonly STALE_NEGATIVE_MS: number;
+  private readonly CACHE_NEGATIVE_MS: number;
 
-  private readonly STALE_403_MS = 10 * 1000; // 10 seconds
-  private readonly CACHE_403_MS = 10 * 1000; // 10 seconds
-  
-  constructor(private inner: MarketPriceProvider) {}
+  private readonly STALE_403_MS: number;
+  private readonly CACHE_403_MS: number;
+
+  // TTLs default to the original NSE tuning so existing behaviour is byte-for-byte
+  // unchanged. The SGBAnalyzer fallback passes overrides (success 30s, failures 10s).
+  constructor(
+    private inner: MarketPriceProvider,
+    ttls?: {
+      staleLiveMs?: number;
+      cacheLiveMs?: number;
+      staleNegativeMs?: number;
+      cacheNegativeMs?: number;
+      stale403Ms?: number;
+      cache403Ms?: number;
+    }
+  ) {
+    this.STALE_LIVE_MS = ttls?.staleLiveMs ?? 60 * 1000; // 60 seconds
+    this.CACHE_LIVE_MS = ttls?.cacheLiveMs ?? 60 * 60 * 1000; // 1 hour
+    this.STALE_NEGATIVE_MS = ttls?.staleNegativeMs ?? 10 * 60 * 1000; // 10 mins
+    this.CACHE_NEGATIVE_MS = ttls?.cacheNegativeMs ?? 60 * 60 * 1000; // 1 hour
+    this.STALE_403_MS = ttls?.stale403Ms ?? 10 * 1000; // 10 seconds
+    this.CACHE_403_MS = ttls?.cache403Ms ?? 10 * 1000; // 10 seconds
+  }
 
   get name(): string {
     return this.inner.name;

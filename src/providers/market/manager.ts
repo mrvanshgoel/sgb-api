@@ -2,22 +2,79 @@ import type { SGBRecord, FullMarketData } from '../../types/index.js';
 import type { MarketPriceProvider } from '../interfaces.js';
 import { CachedMarketPriceProvider } from './cache.js';
 import { NseMarketPriceProvider } from './nse/provider.js';
+import { SgbAnalyzerProvider } from './sgbanalyzer/provider.js';
 import { nseSessionManager } from './nse/session.js';
+import { logger } from '../../utils/logger.js';
 
 export class MarketDataManager {
   private primaryProvider: CachedMarketPriceProvider;
+  private fallbackProvider: CachedMarketPriceProvider;
 
-  constructor() {
-    const nseProvider = new NseMarketPriceProvider();
+  // Providers may be injected for testing. In production both are omitted and
+  // the real NSE + SGBAnalyzer providers are used with their default caching.
+  constructor(primary?: MarketPriceProvider, fallback?: MarketPriceProvider) {
+    const nseProvider = primary ?? new NseMarketPriceProvider();
+    // NSE caching is left exactly as it was — no TTL overrides.
     this.primaryProvider = new CachedMarketPriceProvider(nseProvider);
+
+    // SGBAnalyzer fallback: successes cached 30s, failures 10s. This never
+    // increases NSE request frequency; it only bounds the fallback path.
+    const sgbaProvider = fallback ?? new SgbAnalyzerProvider();
+    this.fallbackProvider = new CachedMarketPriceProvider(sgbaProvider, {
+      staleLiveMs: 30 * 1000,
+      cacheLiveMs: 30 * 1000,
+      staleNegativeMs: 10 * 1000,
+      cacheNegativeMs: 10 * 1000,
+      stale403Ms: 10 * 1000,
+      cache403Ms: 10 * 1000,
+    });
   }
 
   public async getQuote(record: SGBRecord): Promise<FullMarketData> {
-    return this.primaryProvider.getPrice(record);
+    const symbol = record.tradingSymbol ?? '(unknown)';
+    logger.info(`Requesting live quote ${symbol}`);
+
+    const primary = await this.primaryProvider.getPrice(record);
+    if (primary.quote.liveAvailable) {
+      return primary;
+    }
+
+    logger.warn(`NSE unavailable (${primary.quote.reason ?? 'no data'})`);
+    logger.info('Falling back to SGBAnalyzer');
+    const fallback = await this.fallbackProvider.getPrice(record);
+    if (fallback.quote.liveAvailable) {
+      logger.info('Cache updated');
+      return fallback;
+    }
+
+    // Neither source had a live price. Prefer whichever carries real context.
+    return fallback.quote.reason ? fallback : primary;
   }
 
   public async getMultipleQuotes(records: SGBRecord[]): Promise<Map<string, FullMarketData>> {
-    return this.primaryProvider.getMultiple(records);
+    const primary = await this.primaryProvider.getMultiple(records);
+
+    const failed = records.filter((r) => {
+      const q = r.tradingSymbol ? primary.get(r.tradingSymbol) : undefined;
+      return !q || !q.quote.liveAvailable;
+    });
+
+    if (failed.length === 0) {
+      return primary;
+    }
+
+    logger.warn(`NSE unavailable for ${failed.length} symbol(s)`);
+    logger.info('Falling back to SGBAnalyzer');
+    const fallback = await this.fallbackProvider.getMultiple(failed);
+
+    for (const [symbol, data] of fallback) {
+      if (data.quote.liveAvailable) {
+        primary.set(symbol, data);
+      } else if (!primary.has(symbol)) {
+        primary.set(symbol, data);
+      }
+    }
+    return primary;
   }
 
   public getHealth() {
