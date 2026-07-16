@@ -50,34 +50,34 @@ export class NseSessionManager {
     try {
       this.stats.refreshCount++;
       
-      const cookieStr = await new Promise<string>((resolve, reject) => {
-        const headers = {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Sec-Fetch-User': '?1'
-        };
-        
-        https.get('https://www.nseindia.com', { headers }, (res: any) => {
-          if (res.statusCode !== 200 && res.statusCode !== 403) {
-            return reject(new Error(`NSE homepage returned ${res.statusCode}`));
-          }
-          
-          const setCookieHeader = res.headers['set-cookie'] as string[] | undefined;
-          if (!setCookieHeader || setCookieHeader.length === 0) {
-            return reject(new Error("No set-cookie header received from NSE"));
-          }
-          
-          const cookies = setCookieHeader.map(c => c.split(';')[0].trim()).join('; ');
-          resolve(cookies);
-        }).on('error', reject);
-      });
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"'
+      };
+      
+      const res = await fetch('https://www.nseindia.com', { headers });
+      
+      if (res.status !== 200 && res.status !== 403) {
+        throw new Error(`NSE homepage returned ${res.status}`);
+      }
+      
+      const setCookieHeader = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+      if (setCookieHeader.length === 0) {
+        throw new Error("No set-cookie header received from NSE");
+      }
+      
+      const cookieStr = setCookieHeader.map(c => c.split(';')[0].trim()).join('; ');
 
       this.activeCookie = cookieStr;
       this.lastRefreshTime = Date.now();

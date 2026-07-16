@@ -53,34 +53,38 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
     const cookies = await nseSessionManager.getCookie();
     const url = `https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType=N&series=GB&symbol=${symbol}`;
     
-    return new Promise((resolve, reject) => {
-      https.get(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Referer': `https://www.nseindia.com/get-quotes/equity?symbol=${symbol}`,
-          'Cookie': cookies
-        }
-      }, (res) => {
-        if (res.statusCode === 401 || res.statusCode === 403) {
-          return reject(new Error(`NSE returned ${res.statusCode}`));
-        }
-        if (res.statusCode !== 200) {
-          return reject(new Error(`NSE returned ${res.statusCode}`));
-        }
-        
-        let rawData = '';
-        res.on('data', chunk => rawData += chunk);
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(rawData));
-          } catch(e) {
-            reject(new Error("Failed to parse NSE JSON"));
-          }
-        });
-      }).on('error', reject);
-    });
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Referer': 'https://www.nseindia.com/',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"Windows"',
+      'Cookie': cookies
+    };
+
+    const res = await fetch(url, { headers });
+    
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(`NSE returned ${res.status}`);
+    }
+    
+    if (res.status !== 200) {
+      throw new Error(`NSE returned ${res.status}`);
+    }
+    
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch(e) {
+      throw new Error("Failed to parse NSE JSON");
+    }
   }
 
   private parseResponse(json: any, expectedSymbol: string): FullMarketData {
