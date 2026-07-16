@@ -51,7 +51,8 @@ async function getOrCreateSession(): Promise<any> {
     // Copy pre-packaged binary to temp dir on Linux x64 to bypass GitHub 403 WAF block on Render
     if (process.platform === 'linux' && process.arch === 'x64') {
       const __dirname = path.dirname(fileURLToPath(import.meta.url));
-      const sourcePath = path.join(__dirname, '..', '..', '..', '..', 'bin', 'tls-client-x64.so');
+      // relative path to dist/bin/tls-client-x64.so from dist/providers/market/nse/session.js
+      const sourcePath = path.join(__dirname, '..', '..', '..', 'bin', 'tls-client-x64.so');
       const destPath = path.join(os.tmpdir(), 'tls-client-x64.so');
       
       if (fs.existsSync(sourcePath)) {
