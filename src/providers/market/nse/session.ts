@@ -5,12 +5,53 @@ import { loadNseTransportConfig, type TransportMode } from './transport.js';
 // node-tls-client wraps bogdanfinn/tls-client which impersonates Chrome's exact
 // TLS ClientHello fingerprint (JA3/JA4), bypassing Akamai Bot Manager's TLS check.
 // The session object also maintains its own internal cookie jar automatically.
+//
+// Akamai Bot Manager also demands a *warmed* browser session: valid bm_sv / nsit /
+// nseappid cookies that only get set when a real browser navigates the site before
+// hitting the JSON API. So before each API call we prime the cookie jar by GETting
+// the homepage and the exact quote page for the symbol, then send the API request
+// with a Referer that matches that quote page. This is the proven, free technique
+// used by the actively-maintained hi-imcodeman/stock-nse-india project, which calls
+// the identical /api/NextApi/apiClient/GetQuoteApi endpoint. The chrome_131 profile
+// is the newest fingerprint this node-tls-client version ships.
 
 let _session: any = null;
 let _initialized = false;
 
+const NSE_BASE = 'https://www.nseindia.com';
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const SEC_CH_UA = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
+
+// Cookies stay valid for a short window; re-warm past this to keep Akamai happy.
+const COOKIE_MAX_AGE_MS = 60 * 1000;
+
+// Priming is best-effort. On a blocked egress IP the HTML page GETs can be
+// tar-pitted and hang for the full session timeout, which would stall every
+// quote by ~30s. Bound each priming GET so it can never block longer than this;
+// if it times out we proceed to the API call anyway (the 403-retry path handles
+// the rest). The API call itself keeps the full session timeout.
+const WARM_TIMEOUT_MS = 6 * 1000;
+
+/** Resolves to null if `p` doesn't settle within `ms` — never rejects. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
+}
+
 const HOMEPAGE_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'User-Agent': USER_AGENT,
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9',
   'Accept-Encoding': 'gzip, deflate, br',
@@ -20,25 +61,33 @@ const HOMEPAGE_HEADERS = {
   'Sec-Fetch-Mode': 'navigate',
   'Sec-Fetch-Site': 'none',
   'Sec-Fetch-User': '?1',
-  'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+  'Sec-Ch-Ua': SEC_CH_UA,
   'Sec-Ch-Ua-Mobile': '?0',
   'Sec-Ch-Ua-Platform': '"Windows"'
 };
 
 const API_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': '*/*',
+  'User-Agent': USER_AGENT,
+  'Accept': 'application/json, text/plain, */*',
   'Accept-Language': 'en-US,en;q=0.9',
   'Accept-Encoding': 'gzip, deflate, br',
   'Connection': 'keep-alive',
-  'Referer': 'https://www.nseindia.com/',
+  'Authority': 'www.nseindia.com',
+  'Origin': NSE_BASE,
+  'Referer': `${NSE_BASE}/`,
   'Sec-Fetch-Dest': 'empty',
   'Sec-Fetch-Mode': 'cors',
   'Sec-Fetch-Site': 'same-origin',
-  'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+  'Sec-Ch-Ua': SEC_CH_UA,
   'Sec-Ch-Ua-Mobile': '?0',
   'Sec-Ch-Ua-Platform': '"Windows"',
 };
+
+/** Pulls the trading symbol out of a GetQuoteApi URL, for quote-page warming. */
+function extractSymbol(url: string): string | null {
+  const m = url.match(/[?&]symbol=([^&]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
 
 async function getOrCreateSession(): Promise<any> {
   if (_session && _initialized) return _session;
@@ -74,7 +123,7 @@ async function getOrCreateSession(): Promise<any> {
     // Apply centralized outbound transport (proxy / local address / direct).
     const transport = loadNseTransportConfig();
     const sessionOpts: Record<string, unknown> = {
-      clientIdentifier: ClientIdentifier.chrome_120,
+      clientIdentifier: ClientIdentifier.chrome_131,
       timeout: 30_000,
       insecureSkipVerify: false,
       disableIPV6: true,
@@ -90,7 +139,7 @@ async function getOrCreateSession(): Promise<any> {
     _session = new Session(sessionOpts);
     _initialized = true;
     logger.info(
-      `TLS session initialized (Chrome/120 fingerprint, IPv6 disabled, transport: ${transport.mode})`,
+      `TLS session initialized (Chrome/131 fingerprint, IPv6 disabled, transport: ${transport.mode})`,
     );
   } catch (e: any) {
     logger.warn(`TLS client init failed, falling back to native fetch: ${e.message}`);
@@ -102,6 +151,8 @@ async function getOrCreateSession(): Promise<any> {
 
 export class NseSessionManager {
   private lastSessionReset: number = 0;
+  // Timestamp until which the warmed Akamai cookie jar is considered valid.
+  private cookieValidUntil: number = 0;
 
   // Stats for health reporting
   public stats = {
@@ -141,6 +192,40 @@ export class NseSessionManager {
   }
 
   /**
+   * Primes the Akamai cookie jar so the API call is accepted. Navigates the
+   * homepage and the exact quote page for the symbol (like a real browser)
+   * so Set-Cookie values (bm_sv / nsit / nseappid) land in the session jar.
+   * Best-effort: NSE often 403/503s the HTML pages under load, but the cookies
+   * are still set on the response, so we don't treat that as fatal.
+   */
+  private async warmSession(session: any, symbol: string | null, force: boolean): Promise<void> {
+    if (!session) return;
+    if (!force && Date.now() < this.cookieValidUntil) return;
+
+    try {
+      await withTimeout(
+        session.get(NSE_BASE + '/', { headers: HOMEPAGE_HEADERS, followRedirects: true }),
+        WARM_TIMEOUT_MS,
+      );
+      if (symbol) {
+        const quotePage = `${NSE_BASE}/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`;
+        await withTimeout(
+          session.get(quotePage, {
+            headers: { ...HOMEPAGE_HEADERS, Referer: `${NSE_BASE}/` },
+            followRedirects: true,
+          }),
+          WARM_TIMEOUT_MS,
+        );
+      }
+      this.cookieValidUntil = Date.now() + COOKIE_MAX_AGE_MS;
+      this.lastSessionReset = Date.now();
+    } catch {
+      // Priming is best-effort — the API call below still tries, and a 403
+      // there triggers a forced refresh via the provider's retry path.
+    }
+  }
+
+  /**
    * Forces a full session reset (called on 403 from the API endpoint).
    * This recreates the underlying node-tls-client session to get a fresh connection.
    */
@@ -149,6 +234,7 @@ export class NseSessionManager {
     this.stats.refreshCount++;
     _session = null;
     _initialized = false;
+    this.cookieValidUntil = 0;
     await getOrCreateSession();
     this.lastSessionReset = Date.now();
     logger.info('Session refreshed');
@@ -157,13 +243,16 @@ export class NseSessionManager {
   /**
    * Performs a GET request to the given URL using the TLS-impersonating session.
    * All outbound NSE requests flow through here — the single transport chokepoint.
+   * Before an API call it warms the Akamai cookie jar and sets a Referer that
+   * matches the symbol's quote page.
    */
   public async get(url: string): Promise<{ status: number; text: () => Promise<string> }> {
     const session = await getOrCreateSession();
-    const startTime = Date.now();
+    const symbol = extractSymbol(url);
 
     if (!session) {
-      // Fallback to native fetch (no TLS impersonation)
+      // Fallback to native fetch (no TLS impersonation, no cookie priming)
+      const startTime = Date.now();
       const res = await fetch(url, { headers: API_HEADERS });
       const latency = Date.now() - startTime;
       if (res.status === 200) {
@@ -177,16 +266,24 @@ export class NseSessionManager {
       };
     }
 
-    const res = await session.get(url, {
-      headers: API_HEADERS,
-      followRedirects: true,
-    });
+    // Warm the Akamai cookie jar (homepage + quote page) before the API call.
+    await this.warmSession(session, symbol, false);
+
+    const headers = { ...API_HEADERS };
+    if (symbol) {
+      headers.Referer = `${NSE_BASE}/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`;
+    }
+
+    const startTime = Date.now();
+    const res = await session.get(url, { headers, followRedirects: true });
     const latency = Date.now() - startTime;
 
     if (res.status === 200) {
       this.recordSuccess(res.status, latency);
     } else {
       this.recordFailure(res.status, latency);
+      // Invalidate the warmed jar so the next attempt re-primes fresh cookies.
+      this.cookieValidUntil = 0;
     }
 
     return {
