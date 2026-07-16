@@ -8,6 +8,7 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -15,6 +16,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      - name: Debug environment
+        run: |
+          node -v
+          npm -v
+          npm config get registry
+          npm config list
+
+      - name: Inspect package-lock
+        run: |
+          grep -n "@emnapi" package-lock.json || true
 
       - name: Install
         run: npm ci
