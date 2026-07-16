@@ -372,8 +372,8 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
   app.get('/debug/network', async () => {
     const { execSync } = await import('node:child_process');
     try {
-      const nslookup = execSync('nslookup www.nseindia.com').toString();
-      const curl = execSync('curl -I https://www.nseindia.com/').toString();
+      const nslookup = execSync('nslookup www.nseindia.com', { timeout: 5000 }).toString();
+      const curl = execSync('curl -I -m 5 https://www.nseindia.com/', { timeout: 5000 }).toString();
       return { nslookup, curl };
     } catch (e: any) {
       return { error: e.message, stdout: e.stdout?.toString(), stderr: e.stderr?.toString() };
