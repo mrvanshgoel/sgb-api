@@ -268,7 +268,7 @@ export class SgbAnalyzerProvider implements MarketPriceProvider {
       return rows;
     } catch (e: any) {
       if (e?.name === 'AbortError') {
-        throw new Error('SGBAnalyzer request timed out');
+        throw new Error('SGBAnalyzer request timed out', { cause: e });
       }
       throw e;
     } finally {

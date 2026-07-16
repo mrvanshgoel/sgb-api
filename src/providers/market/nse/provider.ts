@@ -80,7 +80,7 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
     try {
       return JSON.parse(text);
     } catch (e) {
-      throw new Error('Failed to parse NSE JSON');
+      throw new Error('Failed to parse NSE JSON', { cause: e });
     }
   }
 

@@ -526,7 +526,7 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
     const { marketDataManager } = await import('../providers/market/manager.js');
 
     nseTracer.arm();
-    let quoteError: string | null = null;
+    let quoteError: string | null;
     let liveAvailable = false;
     let lastPrice: number | null = null;
     try {

@@ -37,7 +37,7 @@ export function calculateFinancials(
   const bidAskSpread = depth.spread ?? null;
 
   // Accrued Interest
-  let accruedInterest: number | null = null;
+  let accruedInterest: number | null;
   if (!derived.isMatured) {
     // SGB pays interest semi-annually.
     // Calculate days since last coupon or issue date
