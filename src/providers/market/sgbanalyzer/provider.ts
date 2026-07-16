@@ -15,6 +15,15 @@ import { logger } from '../../../utils/logger.js';
 // are auth-only; no GraphQL/websocket/EventSource carries quotes). No HTML
 // scraping is needed because the structured CSV is the primary source.
 //
+// Rendered-DOM check (headless Chrome, post-JS, /sgb/sgbjul28iv, sgbjan30ix,
+// sgbaug30): the page shows exactly ONE price — "Current Price / Market price" —
+// and it is byte-identical to the CSV's Ask Price column (14040.82 / 14087.51 /
+// 14192.33). Every other metric (fair value, discount, yield) is login-gated and
+// is just a CSV valuation column. The rendered page exposes NO last traded price,
+// previous close, open, high, low, average traded price, today's volume, value
+// traded, change, change %, timestamp, bid, ask quantity, or market depth. A
+// scraper would therefore add zero fields over the CSV, so none is implemented.
+//
 // CRITICAL ACCURACY NOTE — the CSV holds VALUATION metrics, not live trades:
 //   "Ask Price"                -> best sell-side QUOTE, NOT a last traded price.
 //                                 Mapped to depth.sellPrice1 only. lastPrice
