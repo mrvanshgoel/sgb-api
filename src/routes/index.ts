@@ -413,4 +413,41 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
        uptime: process.uptime()
     };
   });
+
+  // ─── GET /debug/nse ──────────────────────────────────────────────────────────
+  app.get('/debug/nse', async (request, reply) => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch('https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType=N&series=GB&symbol=SGBJUL28IV', {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Referer': 'https://www.nseindia.com/market-data/sovereign-gold-bond',
+          'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"Windows"',
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      const body = await res.text();
+      return {
+        status: res.status,
+        headers: Object.fromEntries(res.headers.entries()),
+        body: body.substring(0, 1000)
+      };
+    } catch (err: any) {
+      return {
+        error: err.name,
+        message: err.message
+      };
+    }
+  });
 }
