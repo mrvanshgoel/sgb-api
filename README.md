@@ -230,6 +230,13 @@ curl http://localhost:3000/provider/health
 
 A healthy deployment shows `status: "healthy"`, `lastHttpStatus: 200`, and `consecutiveFailures: 0`. A run of `lastHttpStatus: 403` with rising `consecutiveFailures` is the shared-IP block described above — configure `NSE_PROXY_URL` or `NSE_LOCAL_ADDRESS`. Fetch a quote first (e.g. `GET /price/SGBJUL28IV`) so the stats reflect a real request.
 
+### Diagnosing 403 request-by-request
+
+When `DEBUG=true`, `GET /debug/nse-trace?symbol=SGBJUL28IV` runs one real quote through the live NSE session with request tracing armed and returns the full outbound sequence — every request URL and order, HTTP status, redirects, the cookie-jar contents (names only, values redacted), the cookie delta added/removed after each request, and the final request headers (sensitive values redacted). This makes it possible to compare our exact request sequence against reference implementations such as [`hi-imcodeman/stock-nse-india`](https://github.com/hi-imcodeman/stock-nse-india). The endpoint returns `404` unless `DEBUG=true`.
+
+A trace that shows all three requests (`homepage` → `quote-page` → `api`) returning `200` with Akamai cookies (`bm_sv`, `nsit`, `_abck`, `ak_bmsc`) acquired in order — yet still `403` in production — confirms the block is IP-reputation, not a bug in the request sequence. The reference project's own users report the identical symptom on cloud servers (works locally, 403 on server), so no free header/cookie/fingerprint change resolves it; a clean egress IP does.
+
+
 
 ### Bare metal / VM
 

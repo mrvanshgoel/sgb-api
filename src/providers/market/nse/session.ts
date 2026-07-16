@@ -1,5 +1,6 @@
 import { logger } from '../../../utils/logger.js';
 import { loadNseTransportConfig, type TransportMode } from './transport.js';
+import { nseTracer, cookieNames } from './trace.js';
 
 // ── Lazy-loaded TLS session (avoids startup cost when not needed) ──────────────
 // node-tls-client wraps bogdanfinn/tls-client which impersonates Chrome's exact
@@ -25,6 +26,12 @@ const SEC_CH_UA = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v=
 
 // Cookies stay valid for a short window; re-warm past this to keep Akamai happy.
 const COOKIE_MAX_AGE_MS = 60 * 1000;
+
+// The reference project (hi-imcodeman/stock-nse-india) also re-warms after a fixed
+// number of API calls on the same cookie jar (cookieUsedCount > 10), independent of
+// the time window — Akamai appears to bind a warmed session to a small request
+// budget. We replicate that so a hot jar doesn't get reused into a 403.
+const COOKIE_MAX_USES = 10;
 
 // Priming is best-effort. On a blocked egress IP the HTML page GETs can be
 // tar-pitted and hang for the full session timeout, which would stall every
@@ -153,6 +160,8 @@ export class NseSessionManager {
   private lastSessionReset: number = 0;
   // Timestamp until which the warmed Akamai cookie jar is considered valid.
   private cookieValidUntil: number = 0;
+  // How many API calls have reused the current warmed jar (see COOKIE_MAX_USES).
+  private cookieUsedCount: number = 0;
 
   // Stats for health reporting
   public stats = {
@@ -200,29 +209,78 @@ export class NseSessionManager {
    */
   private async warmSession(session: any, symbol: string | null, force: boolean): Promise<void> {
     if (!session) return;
-    if (!force && Date.now() < this.cookieValidUntil) return;
+    const jarExhausted = this.cookieUsedCount > COOKIE_MAX_USES;
+    if (!force && !jarExhausted && Date.now() < this.cookieValidUntil) return;
 
     try {
       await withTimeout(
-        session.get(NSE_BASE + '/', { headers: HOMEPAGE_HEADERS, followRedirects: true }),
+        this.tracedGet(session, NSE_BASE + '/', HOMEPAGE_HEADERS, 'homepage'),
         WARM_TIMEOUT_MS,
       );
       if (symbol) {
         const quotePage = `${NSE_BASE}/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`;
         await withTimeout(
-          session.get(quotePage, {
-            headers: { ...HOMEPAGE_HEADERS, Referer: `${NSE_BASE}/` },
-            followRedirects: true,
-          }),
+          this.tracedGet(
+            session,
+            quotePage,
+            { ...HOMEPAGE_HEADERS, Referer: `${NSE_BASE}/` },
+            'quote-page',
+          ),
           WARM_TIMEOUT_MS,
         );
       }
       this.cookieValidUntil = Date.now() + COOKIE_MAX_AGE_MS;
+      this.cookieUsedCount = 0;
       this.lastSessionReset = Date.now();
     } catch {
       // Priming is best-effort — the API call below still tries, and a 403
       // there triggers a forced refresh via the provider's retry path.
     }
+  }
+
+  /**
+   * Wraps a session.get with trace capture: records URL, order, status, redirect,
+   * final headers (redacted), and the cookie-jar delta around the request. When the
+   * tracer is inactive (default) this is a thin passthrough with no jar reads.
+   */
+  private async tracedGet(
+    session: any,
+    url: string,
+    headers: Record<string, string>,
+    phase: string,
+  ): Promise<any> {
+    if (!nseTracer.active) {
+      return session.get(url, { headers, followRedirects: true });
+    }
+    const before = cookieNames(await session.cookies().catch(() => []));
+    const start = Date.now();
+    let res: any = null;
+    let error: string | undefined;
+    try {
+      res = await session.get(url, { headers, followRedirects: true });
+    } catch (e: any) {
+      error = e?.message ?? String(e);
+    }
+    const after = cookieNames(await session.cookies().catch(() => []));
+    const beforeSet = new Set(before);
+    const afterSet = new Set(after);
+    nseTracer.record({
+      phase,
+      method: 'GET',
+      url,
+      status: res?.status ?? null,
+      finalUrl: res?.url ?? null,
+      redirected: !!res?.url && res.url !== url,
+      requestHeaders: headers,
+      cookiesBefore: before,
+      cookiesAfter: after,
+      cookiesAdded: after.filter((n) => !beforeSet.has(n)),
+      cookiesRemoved: before.filter((n) => !afterSet.has(n)),
+      error,
+      latencyMs: Date.now() - start,
+    });
+    if (error) throw new Error(error);
+    return res;
   }
 
   /**
@@ -235,6 +293,7 @@ export class NseSessionManager {
     _session = null;
     _initialized = false;
     this.cookieValidUntil = 0;
+    this.cookieUsedCount = 0;
     await getOrCreateSession();
     this.lastSessionReset = Date.now();
     logger.info('Session refreshed');
@@ -275,8 +334,9 @@ export class NseSessionManager {
     }
 
     const startTime = Date.now();
-    const res = await session.get(url, { headers, followRedirects: true });
+    const res = await this.tracedGet(session, url, headers, 'api');
     const latency = Date.now() - startTime;
+    this.cookieUsedCount++;
 
     if (res.status === 200) {
       this.recordSuccess(res.status, latency);

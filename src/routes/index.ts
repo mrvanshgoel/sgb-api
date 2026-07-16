@@ -6,6 +6,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { AppDeps } from '../build-app.js';
+import { isDebug } from '../utils/logger.js';
 import { toSeriesResponse, todayIST } from '../services/derived.js';
 import {
   sgbRecordJson,
@@ -466,5 +467,53 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
         message: err.message
       };
     }
+  });
+
+  // ─── GET /debug/nse-trace ─────────────────────────────────────────────────────
+  // DEBUG-only. Runs one real quote through the live NSE session with request
+  // tracing armed, then returns the full outbound sequence (URLs, order, status,
+  // redirects, cookie-jar names + deltas, final redacted headers) so our behavior
+  // can be compared request-by-request against hi-imcodeman/stock-nse-india.
+  app.get<{ Querystring: { symbol?: string } }>('/debug/nse-trace', async (request, reply) => {
+    if (!isDebug) {
+      return reply.status(404).send({
+        error: 'Not Found',
+        message: 'Route GET /debug/nse-trace not found',
+        statusCode: 404,
+      });
+    }
+
+    const symbol = (request.query.symbol || 'SGBJUL28IV').toUpperCase();
+    const record = seriesProvider.getBySymbol(symbol);
+
+    const { nseTracer } = await import('../providers/market/nse/trace.js');
+    const { marketDataManager } = await import('../providers/market/manager.js');
+
+    nseTracer.arm();
+    let quoteError: string | null = null;
+    let liveAvailable = false;
+    let lastPrice: number | null = null;
+    try {
+      // Use a minimal record if the symbol isn't in the dataset, so the trace
+      // still exercises the real request sequence for an arbitrary symbol.
+      const target = record ?? ({ tradingSymbol: symbol } as any);
+      const data = await marketDataManager.getQuote(target);
+      liveAvailable = data.quote.liveAvailable;
+      lastPrice = data.quote.lastPrice;
+      quoteError = data.quote.reason || null;
+    } catch (e: any) {
+      quoteError = e?.message ?? String(e);
+    }
+    const trace = nseTracer.snapshot();
+    nseTracer.disarm();
+
+    return {
+      symbol,
+      symbolInDataset: !!record,
+      result: { liveAvailable, lastPrice, reason: quoteError },
+      health: marketDataManager.getHealth(),
+      requestCount: trace.length,
+      trace,
+    };
   });
 }
