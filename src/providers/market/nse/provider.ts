@@ -64,9 +64,6 @@ export class NseMarketPriceProvider implements MarketPriceProvider {
   }
 
   private async fetchData(symbol: string): Promise<any> {
-    // Ensure session cookie is fresh (no-op if already valid)
-    await nseSessionManager.ensureSession();
-
     const url = `https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType=N&series=GB&symbol=${symbol}`;
 
     logger.info(`Fetching live quote: ${symbol}`);

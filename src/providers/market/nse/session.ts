@@ -86,10 +86,8 @@ async function getOrCreateSession(): Promise<any> {
 }
 
 export class NseSessionManager {
-  private lastRefreshTime: number = 0;
-  private refreshPromise: Promise<void> | null = null;
-  private consecutiveFailures: number = 0;
-
+  private lastSessionReset: number = 0;
+  
   // Stats for health reporting
   public stats = {
     refreshCount: 0,
@@ -98,93 +96,21 @@ export class NseSessionManager {
     lastFailure: null as Date | null
   };
 
-  private readonly REFRESH_INTERVAL_MS = 45 * 60 * 1000; // 45 minutes
-
   /**
-   * Ensures the TLS session has a valid NSE homepage cookie.
-   * With node-tls-client, cookies are stored internally in the session object,
-   * so we don't need to manually extract and forward them.
-   */
-  public async ensureSession(): Promise<void> {
-    const now = Date.now();
-
-    // If we refreshed recently, skip
-    if (this.lastRefreshTime && (now - this.lastRefreshTime < this.REFRESH_INTERVAL_MS)) {
-      return;
-    }
-
-    // Dedup concurrent refreshes
-    if (this.refreshPromise) {
-      return this.refreshPromise;
-    }
-
-    this.refreshPromise = this.fetchHomepage().finally(() => {
-      this.refreshPromise = null;
-    });
-
-    return this.refreshPromise;
-  }
-
-  /**
-   * Forces a full session refresh (called on 403 from the API endpoint).
+   * Forces a full session reset (called on 403 from the API endpoint).
+   * This recreates the underlying node-tls-client session to get a fresh connection.
    */
   public async forceRefresh(): Promise<void> {
-    if (this.refreshPromise) return this.refreshPromise;
-
-    this.lastRefreshTime = 0; // Reset so ensureSession forces a refresh
-    return this.ensureSession();
-  }
-
-  private async fetchHomepage(retries = 3): Promise<void> {
-    const session = await getOrCreateSession();
-    try {
-      this.stats.refreshCount++;
-      logger.time('nse-session-refresh');
-
-      if (!session) {
-        // Fallback: native fetch (may still 403 on Render due to IP but keeps fallback path)
-        const res = await fetch('https://www.nseindia.com', {
-          headers: HOMEPAGE_HEADERS
-        });
-        if (res.status !== 200) {
-          throw new Error(`NSE homepage returned ${res.status}`);
-        }
-      } else {
-        // TLS-impersonating session — handles cookies internally
-        const res = await session.get('https://www.nseindia.com', {
-          headers: HOMEPAGE_HEADERS,
-          followRedirects: true
-        });
-        if (res.status !== 200) {
-          throw new Error(`NSE homepage returned ${res.status}`);
-        }
-      }
-
-      this.lastRefreshTime = Date.now();
-      this.consecutiveFailures = 0;
-      this.stats.lastSuccess = new Date();
-
-      logger.timeEnd('nse-session-refresh', 'NSE session refreshed successfully');
-    } catch (error) {
-      this.consecutiveFailures++;
-      this.stats.failureCount++;
-      this.stats.lastFailure = new Date();
-
-      if (retries > 0) {
-        const backoffMs = Math.pow(2, 4 - retries) * 1000;
-        logger.warn(`Failed to refresh NSE session, retrying in ${backoffMs}ms...`);
-        await new Promise(res => setTimeout(res, backoffMs));
-        return this.fetchHomepage(retries - 1);
-      }
-
-      logger.error(`Failed to refresh NSE session: ${(error as Error).message}`);
-      throw error;
-    }
+    logger.info('Resetting TLS session due to 403...');
+    this.stats.refreshCount++;
+    _session = null; 
+    _initialized = false;
+    await getOrCreateSession();
+    this.lastSessionReset = Date.now();
   }
 
   /**
    * Performs a GET request to the given URL using the TLS-impersonating session.
-   * The session automatically includes its stored cookies.
    */
   public async get(url: string): Promise<{ status: number; text: () => Promise<string> }> {
     const session = await getOrCreateSession();
@@ -192,6 +118,12 @@ export class NseSessionManager {
     if (!session) {
       // Fallback to native fetch (no TLS impersonation)
       const res = await fetch(url, { headers: API_HEADERS });
+      if (res.status === 200) {
+        this.stats.lastSuccess = new Date();
+      } else {
+        this.stats.failureCount++;
+        this.stats.lastFailure = new Date();
+      }
       return {
         status: res.status,
         text: () => res.text()
@@ -202,6 +134,13 @@ export class NseSessionManager {
       headers: API_HEADERS,
       followRedirects: true
     });
+    
+    if (res.status === 200) {
+      this.stats.lastSuccess = new Date();
+    } else {
+      this.stats.failureCount++;
+      this.stats.lastFailure = new Date();
+    }
 
     return {
       status: res.status,
@@ -210,8 +149,8 @@ export class NseSessionManager {
   }
 
   public getCookieAgeSeconds(): number {
-    if (!this.lastRefreshTime) return 0;
-    return Math.floor((Date.now() - this.lastRefreshTime) / 1000);
+    if (!this.lastSessionReset) return 0;
+    return Math.floor((Date.now() - this.lastSessionReset) / 1000);
   }
 }
 
