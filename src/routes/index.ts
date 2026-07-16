@@ -368,6 +368,18 @@ export async function registerRoutes(app: FastifyInstance, deps: AppDeps): Promi
     }
   );
 
+  // ── GET /debug/network ────────────────────────────────────────────────
+  app.get('/debug/network', async () => {
+    const { execSync } = await import('node:child_process');
+    try {
+      const nslookup = execSync('nslookup www.nseindia.com').toString();
+      const curl = execSync('curl -I https://www.nseindia.com/').toString();
+      return { nslookup, curl };
+    } catch (e: any) {
+      return { error: e.message, stdout: e.stdout?.toString(), stderr: e.stderr?.toString() };
+    }
+  });
+
   // ── GET /depth/:symbol ────────────────────────────────────────────────
   app.get<{ Params: { symbol: string } }>(
     '/depth/:symbol',
