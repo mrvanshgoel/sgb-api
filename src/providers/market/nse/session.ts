@@ -43,6 +43,29 @@ async function getOrCreateSession(): Promise<any> {
   if (_session && _initialized) return _session;
 
   try {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const { fileURLToPath } = await import('node:url');
+
+    // Copy pre-packaged binary to temp dir on Linux x64 to bypass GitHub 403 WAF block on Render
+    if (process.platform === 'linux' && process.arch === 'x64') {
+      const __dirname = path.dirname(fileURLToPath(import.meta.url));
+      const sourcePath = path.join(__dirname, '..', '..', '..', '..', 'bin', 'tls-client-x64.so');
+      const destPath = path.join(os.tmpdir(), 'tls-client-x64.so');
+      
+      if (fs.existsSync(sourcePath)) {
+        if (!fs.existsSync(destPath)) {
+          logger.info(`Copying pre-packaged tls-client-x64.so to temp dir: ${destPath}`);
+          fs.copyFileSync(sourcePath, destPath);
+        } else {
+          logger.info('pre-packaged tls-client-x64.so already exists in temp dir');
+        }
+      } else {
+        logger.warn(`Pre-packaged binary not found at ${sourcePath}`);
+      }
+    }
+
     const { Session, ClientIdentifier, initTLS } = await import('node-tls-client');
     await initTLS();
     _session = new Session({
